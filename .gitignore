@@ -1,0 +1,170 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.installed.cfg
+.eggs/
+downloads/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+# Allow info_frontend/lib (Next.js needs this)
+!info_frontend/lib/
+share/python-wheels/
+MANIFEST
+
+# Virtual Environments
+venv/
+env/
+.env
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.idea/
+.vscode/
+.spyderproject
+.spyproject
+.ropeproject
+.claude/settings.local.json
+
+# Testing and Coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+cover/
+
+# Logs and Databases
+*.log
+*.db
+db.sqlite3
+db.sqlite3-journal
+pip-log.txt
+logs/
+call_logs/
+
+# System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*.bak
+*.tmp
+*~
+*:Zone.Identifier
+*:Zone.Identifier:Zone.Identifier
+
+# Build and Documentation
+docs/_build/
+.pybuilder/
+target/
+instance/
+.webassets-cache
+.pdm.toml
+.pdm-python
+.pdm-build/
+__pypackages__/
+
+# Other
+*.mo
+*.pot
+*.sage.py
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+cython_debug/
+BackUp.md
+.ipynb_checkpoints
+
+# Pipecat cloud
+.pcc-deploy.toml
+
+# Bridge connection folder (hosted on Azure)
+talkdeskbridge/
+
+# Frontend (moved to separate repository)
+info_frontend/
+
+# External project folders
+BridgeLombardia-main/
+
+# Recordings and temporary files
+recordings/
+*.wav
+*.mp3
+*.mp4
+
+# Security - SSH Keys and Certificates (NEVER commit these!)
+*.pem
+*.pem:Zone.Identifier
+*.key
+*.crt
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*.ssh
+voilavoicebookingvm_key*
+
+# Large data files
+city_codes.json
+
+# Call data and transcripts (stored in Azure)
+
+
+# Docker and deployment
+docker-compose.override.yml
+.docker/
+
+# Additional folders to ignore
+data/
+temp/
+tmp/
+cache/
+.cache/
+
+# Azure Storage local files
+20*_*.json
+
+
+# Extra folders that shouldn't be committed
+extra/
+
+# Development and testing files
+test.py
+test_*.py
+
+# Langfuse trace files (local testing only)
+test_traces.json/
+
+# MCP Server (Serena)
+.serena/
+
+# Development helper files
+.envrc
+activate.sh
+
+
+# External reference repos (cloned for Claude to research)
+_refs/

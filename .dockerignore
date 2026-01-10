@@ -1,0 +1,99 @@
+# Git and IDE files
+.git
+.gitignore
+.claude/
+.vscode/
+.idea/
+
+# Documentation
+README.md
+*.md
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Virtual environments
+venv/
+env/
+.env
+.venv/
+
+# Logs and temporary files
+*.log
+logs/
+call_logs/
+recordings/
+# data/  # COMMENTED OUT - We need data folder for local services!
+temp/
+tmp/
+cache/
+.cache/
+
+# Extra folders
+extra/
+
+# Bridge connection folder (hosted separately on Azure)
+talkdeskbridge/
+
+# Frontend (moved to separate repository)
+info_frontend/
+
+# External project folders
+BridgeLombardia-main/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Docker files (don't include in image)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# CI/CD and deployment
+.github/
+*.pem
+*.key
+
+# Test files
+tests/
+*_test.py
+test_*.py
+test.py
+
+# Langfuse trace files (local testing only)
+test_traces.json/
+
+# Large data files - be specific to avoid blocking needed files
+extra/*.json
+recordings/*.json
+logs/*.json
+
+# Additional Python and development files
+.pytest_cache/
+.coverage
+.mypy_cache/
+.tox/
+.nox/
+htmlcov/
+*.cover
+
+# Node modules (if any)
+node_modules/
+
+# Audio/video files
+*.wav
+*.mp3
+*.mp4
+
+# System files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

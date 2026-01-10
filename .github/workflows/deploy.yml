@@ -1,0 +1,227 @@
+name: Build and Deploy to Azure
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: rudyimhtpdev
+  BACKEND_IMAGE: lombardia_region
+  AZURE_VM_HOST: 20.199.66.239
+  AZURE_VM_USER: azureuser
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      
+      - name: Detect Changes & Generate Version
+        id: meta
+        run: |
+          # Generate version
+          echo "version=v$(date +%Y%m%d-%H%M%S)-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+          # Detect what changed
+          if git diff --name-only HEAD^ HEAD | grep -E '^(info_agent|config|flows|models|pipeline|services|utils|bot\.py|chat_service\.py|requirements\.txt|Dockerfile)'; then
+            echo "backend=true" >> $GITHUB_OUTPUT
+            echo "✅ Backend changed"
+          else
+            echo "backend=false" >> $GITHUB_OUTPUT
+            echo "⏭️ Backend unchanged"
+          fi
+      
+      - name: Set up Docker Buildx
+        if: steps.meta.outputs.backend == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: steps.meta.outputs.backend == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+      - name: Build and Push Backend
+        if: steps.meta.outputs.backend == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:latest
+            ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Deploy to Azure VM
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.AZURE_VM_HOST }}
+          username: ${{ env.AZURE_VM_USER }}
+          key: ${{ secrets.AZURE_SSH_KEY }}
+          script: |
+            cd /home/azureuser/voilavoiceagent
+
+            # Pull latest code (force update to match remote)
+            echo "📥 Pulling latest code..."
+            
+            # Store old commit hash before pulling
+            OLD_COMMIT=$(git rev-parse HEAD)
+            
+            # Force update to match remote (handles divergent branches)
+            git fetch origin main
+            git reset --hard origin/main
+            
+            NEW_COMMIT=$(git rev-parse HEAD)
+            
+            echo "Updated from $OLD_COMMIT to $NEW_COMMIT"
+            
+            # Check if config files changed
+            if [ "$OLD_COMMIT" != "$NEW_COMMIT" ]; then
+              if git diff $OLD_COMMIT $NEW_COMMIT --name-only | grep -E '(nginx.conf|docker-compose.yml)'; then
+                echo "📝 Config files changed - will restart affected services"
+                CONFIG_CHANGED=1
+              else
+                CONFIG_CHANGED=0
+              fi
+            else
+              CONFIG_CHANGED=0
+            fi
+
+            # Login to Docker Hub
+            echo "🔐 Logging in to Docker Hub..."
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+            # Check disk space
+            echo "💾 Checking disk space..."
+            df -h /
+            AVAILABLE=$(df / | tail -1 | awk '{print $4}' | sed 's/G//')
+            echo "Available space: ${AVAILABLE}GB"
+            
+            # Clean up if space is low
+            if [ $(echo "$AVAILABLE < 10" | bc) -eq 1 ]; then
+              echo "⚠️ Low disk space detected! Cleaning up..."
+              
+              # Remove buildx volume (frees ~3GB)
+              docker stop buildx_buildkit_mybuilder0 2>/dev/null || true
+              docker rm buildx_buildkit_mybuilder0 2>/dev/null || true
+              docker volume rm buildx_buildkit_mybuilder0_state 2>/dev/null || true
+              
+              # Clean old images
+              docker image prune -a -f --filter "until=72h"
+              
+              # Check space again
+              df -h /
+            else
+              # Just clean very old images
+              echo "🧹 Cleaning old images..."
+              docker image prune -a -f --filter "until=168h"
+            fi
+
+            # Pull latest images with retry
+            echo "📦 Pulling latest images..."
+            MAX_RETRIES=3
+            RETRY_COUNT=0
+            
+            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+              if docker pull ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:latest; then
+                echo "✅ Backend image pulled successfully"
+                break
+              else
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                  echo "⚠️ Backend pull failed, retrying ($RETRY_COUNT/$MAX_RETRIES)..."
+                  sleep 5
+                else
+                  echo "❌ Backend pull failed after $MAX_RETRIES attempts"
+                  exit 1
+                fi
+              fi
+            done
+            
+
+            # Tag current images as backup (for rollback)
+            echo "💾 Creating backup tags..."
+            docker tag $(docker inspect --format='{{.Image}}' pipecat-agent-1 2>/dev/null || echo "none") ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:backup 2>/dev/null || true
+            
+            # Create necessary directories
+            mkdir -p logs/nginx recordings
+
+            # Restart services if config changed
+            if [ $CONFIG_CHANGED -eq 1 ]; then
+              echo "🔄 Restarting nginx load balancer with new configuration..."
+              docker-compose restart nginx-lb
+              sleep 5
+            fi
+            
+            # Deploy updates (use down + up to avoid docker-compose v1.29.2 recreation bug)
+            echo "🚀 Deploying services..."
+            echo "⏬ Stopping old containers..."
+            docker-compose down
+            echo "⏫ Starting new containers..."
+            docker-compose up -d
+            echo "✅ Deployment complete"
+            
+            # Wait for services to start
+            echo "⏳ Waiting for services..."
+            sleep 15
+            
+            # Health checks with rollback on failure
+            echo "🏥 Health checks..."
+            HEALTH_CHECK_FAILED=0
+
+            # Check Pipecat agents (critical)
+            if curl -f http://localhost:8000/health >/dev/null 2>&1; then
+              echo "✅ Pipecat agents are healthy"
+            else
+              echo "❌ Pipecat agents health check failed"
+              HEALTH_CHECK_FAILED=1
+            fi
+            
+            # Rollback if critical health checks failed
+            if [ $HEALTH_CHECK_FAILED -eq 1 ]; then
+              echo ""
+              echo "❌ Critical services failed health checks!"
+              echo "🔄 Rolling back to previous version..."
+              
+              # Stop current containers
+              docker-compose down
+              
+              # Restore backup images
+              docker tag ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:backup ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:latest 2>/dev/null || true
+              
+              # Restart with backup
+              docker-compose up -d
+              
+              echo "✅ Rollback completed"
+              exit 1
+            fi
+            
+            # Show deployment status
+            echo ""
+            echo "📊 Container Status:"
+            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+            
+            echo ""
+            echo "📝 Recent logs:"
+            docker-compose logs --tail=10
+
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo "## 🚀 Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ steps.meta.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backend**: ${{ steps.meta.outputs.backend == 'true' && '✅ Built' || '⏭️ Skipped' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Access URLs:" >> $GITHUB_STEP_SUMMARY
+          echo "- 📞 **Voice WebSocket**: ws://${{ env.AZURE_VM_HOST }}:8000/ws" >> $GITHUB_STEP_SUMMARY
+          echo "- 🏥 **Health Check**: http://${{ env.AZURE_VM_HOST }}:8000/health" >> $GITHUB_STEP_SUMMARY

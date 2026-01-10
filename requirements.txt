@@ -1,0 +1,82 @@
+# All Requirements - Optimized with BuildKit Cache
+# First build: 4-6 hours | Next builds: 5-15 min (cache reused!)
+
+# ============================================
+# HEAVY PACKAGES (slow to download, but cached by BuildKit!)
+# ============================================
+
+# Core Pipecat with all extras
+pipecat-ai[daily,openai,silero,deepgram,elevenlabs,azure]
+pipecat-ai-flows==0.0.22
+
+# PyTorch (large downloads ~900MB total)
+torch==2.8.0
+torchaudio==2.8.0
+
+# AI Service SDKs
+deepgram-sdk==4.7.0
+openai==1.99.1
+anthropic==0.69.0
+google-genai==1.43.0
+
+# ============================================
+# WEB FRAMEWORK & NETWORKING
+# ============================================
+fastapi==0.119.0
+uvicorn==0.37.0
+websockets==15.0.1
+uvloop==0.21.0
+
+# ============================================
+# CORE LIBRARIES
+# ============================================
+requests==2.32.5
+aiohttp==3.13.0
+pydantic==2.12.0
+numpy==2.2.6
+python-dotenv==1.0.1
+loguru==0.7.3
+urllib3==2.5.0
+python-json-logger==4.0.0
+rapidfuzz==3.14.1
+
+# ============================================
+# ADDITIONAL SERVICES
+# ============================================
+azure-storage-blob>=12.19.0
+twilio
+redis
+pymysql
+aiomysql
+
+# ============================================
+# OBSERVABILITY - LangFuse & OpenTelemetry
+# ============================================
+langfuse==3.1.0
+opentelemetry-api>=1.33.1,<2.0.0
+opentelemetry-sdk>=1.33.1,<2.0.0
+opentelemetry-exporter-otlp-proto-http>=1.33.1,<2.0.0
+opentelemetry-instrumentation-fastapi>=0.48b0
+opentelemetry-instrumentation-requests>=0.48b0
+
+# ============================================
+# DASHBOARD API DEPENDENCIES
+# ============================================
+# PostgreSQL async driver (Supabase)
+asyncpg==0.30.0
+
+# Authentication & Security
+bcrypt==4.1.2
+email-validator==2.1.0
+
+# Email Service
+sendgrid==6.12.4
+python-http-client==3.3.7
+
+# Vector Database & Embeddings
+pinecone==7.0.1
+pinecone-plugin-assistant==0.2.0
+pinecone-plugin-interface==0.0.7
+
+# Total size: ~1.2GB of packages
+# BuildKit cache saves this locally after first download!
