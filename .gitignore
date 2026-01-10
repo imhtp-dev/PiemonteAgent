@@ -138,7 +138,6 @@ docker-compose.override.yml
 .docker/
 
 # Additional folders to ignore
-data/
 temp/
 tmp/
 cache/
