@@ -55,6 +55,7 @@ COPY pipeline/ ./pipeline/
 COPY services/ ./services/
 COPY utils/ ./utils/
 COPY data/ ./data/
+COPY api/ ./api/
 COPY bot.py ./
 COPY chat_service.py ./
 
