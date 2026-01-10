@@ -168,3 +168,19 @@ activate.sh
 
 # External reference repos (cloned for Claude to research)
 _refs/
+
+# Claude Code files
+.claude/
+CLAUDE.md
+
+# Documentation folders (not needed in repo)
+docs/
+task-docs/
+
+# Test files and folders
+tests/
+chat_test.py
+voice_test.py
+
+# Scripts folder (if development only)
+scripts/

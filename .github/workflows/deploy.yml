@@ -9,8 +9,8 @@ on:
 
 env:
   REGISTRY: rudyimhtpdev
-  BACKEND_IMAGE: lombardia_region
-  AZURE_VM_HOST: 20.199.66.239
+  BACKEND_IMAGE: piemonte_region
+  AZURE_VM_HOST: 20.19.89.99
   AZURE_VM_USER: azureuser
 
 jobs:

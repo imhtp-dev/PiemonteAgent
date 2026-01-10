@@ -97,3 +97,16 @@ node_modules/
 Thumbs.db
 *.swp
 *.swo
+
+# External reference repos
+_refs/
+
+# Documentation folders
+docs/
+task-docs/
+
+# Claude Code files
+CLAUDE.md
+
+# Scripts folder
+scripts/

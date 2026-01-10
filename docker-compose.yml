@@ -24,7 +24,7 @@ services:
 
   # Pipecat Agent 1
   pipecat-agent-1:
-    image: rudyimhtpdev/lombardia_region:latest
+    image: rudyimhtpdev/piemonte_region:latest
     container_name: pipecat-agent-1
     environment:
       - PORT=8000
@@ -77,7 +77,7 @@ services:
 
   # Pipecat Agent 2
   pipecat-agent-2:
-    image: rudyimhtpdev/lombardia_region:latest
+    image: rudyimhtpdev/piemonte_region:latest
     container_name: pipecat-agent-2
     environment:
       - PORT=8000
@@ -130,7 +130,7 @@ services:
 
   # Pipecat Agent 3
   pipecat-agent-3:
-    image: rudyimhtpdev/lombardia_region:latest
+    image: rudyimhtpdev/piemonte_region:latest
     container_name: pipecat-agent-3
     environment:
       - PORT=8000
@@ -184,7 +184,7 @@ services:
   # Chat Service - WebSocket API for Dashboard Integration
   # DISABLED FOR NOW - Will be used in future
   # chat-service:
-  #   image: rudyimhtpdev/lombardia_region:latest
+  #   image: rudyimhtpdev/piemonte_region:latest
   #   container_name: chat-service
   #   command: python chat_service.py
   #   ports:
