@@ -183,3 +183,6 @@ voice_test.py
 
 # Scripts folder (if development only)
 scripts/
+
+# Voice agent API (separate deployment)
+voilavoiceagent/

@@ -134,8 +134,8 @@ class Settings:
             "https://voilavoiceagent-cyf2e9bshnguaebh.westeurope-01.azurewebsites.net"
         )
         return {
-            "knowledge_base_lombardia": os.getenv(
-                "KNOWLEDGE_BASE_LOMBARDIA_URL",
+            "knowledge_base_new": os.getenv(
+                "KNOWLEDGE_BASE_URL",
                 f"{base_url}/query_new"
             ),
             "exam_by_visit": os.getenv(
@@ -148,14 +148,14 @@ class Settings:
             ),
             "price_non_agonistic": os.getenv(
                 "PRICE_NON_AGONISTIC_URL",
-                f"{base_url}/get_price_non_agonistic_visit_lombardia"
+                f"{base_url}/get_price_non_agonistic_visit"
             ),
             "price_agonistic": os.getenv(
                 "PRICE_AGONISTIC_URL",
                 f"{base_url}/get_price_agonistic_visit"
             ),
-            "call_graph_lombardia": os.getenv(
-                "CALL_GRAPH_LOMBARDIA_URL",
+            "call_graph": os.getenv(
+                "CALL_GRAPH_URL",
                 f"{base_url}/call_graph"
             )
         }

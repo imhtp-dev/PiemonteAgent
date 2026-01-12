@@ -26,7 +26,7 @@ class ClinicInfoService:
     """Service for getting clinic information"""
     
     def __init__(self):
-        self.api_url = settings.info_api_endpoints["call_graph_lombardia"]
+        self.api_url = settings.info_api_endpoints["call_graph"]
         self.timeout = settings.api_timeout
         self.session: Optional[aiohttp.ClientSession] = None
         logger.info(f"🏥 Clinic Info Service initialized: {self.api_url}")
@@ -63,7 +63,7 @@ class ClinicInfoService:
                         {
                             "toolCallId": "pipecat_clinic_info",
                             "function": {
-                                "name": "call_graph_lombardia",
+                                "name": "call_graph",
                                 "arguments": json.dumps({"q": query})
                             }
                         }

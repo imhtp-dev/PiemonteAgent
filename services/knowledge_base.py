@@ -28,7 +28,7 @@ class KnowledgeBaseService:
     """Service for querying Cerba Healthcare knowledge base"""
     
     def __init__(self):
-        self.api_url = settings.info_api_endpoints["knowledge_base_lombardia"]
+        self.api_url = settings.info_api_endpoints["knowledge_base_new"]
         self.timeout = settings.api_timeout
         self.session: Optional[aiohttp.ClientSession] = None
         logger.info(f"📚 Knowledge Base Service initialized: {self.api_url}")
@@ -39,7 +39,7 @@ class KnowledgeBaseService:
             self.session = aiohttp.ClientSession()
             logger.debug("📚 HTTP session created for knowledge base")
     
-    @trace_api_call("api.knowledge_base_lombardia")
+    @trace_api_call("api.knowledge_base_new")
     async def query(self, question: str) -> KnowledgeBaseResult:
         """
         Query knowledge base with natural language question
@@ -67,9 +67,9 @@ class KnowledgeBaseService:
                 "message": {
                     "toolCallList": [
                         {
-                            "toolCallId": "pipecat_knowledge_base_lombardia",
+                            "toolCallId": "pipecat_knowledge_base_new",
                             "function": {
-                                "name": "knowledge_base_lombardia",
+                                "name": "knowledge_base_new",
                                 "arguments": json.dumps({"query": question})
                             }
                         }
@@ -124,7 +124,7 @@ class KnowledgeBaseService:
                         )
 
                     # String response = successful answer from Lombardy API
-                    logger.success(f"✅ Knowledge base returned answer (Lombardy format - string)")
+                    logger.success(f"✅ Knowledge base returned answer (Piemonte format - string)")
                     logger.debug(f"📚 Answer preview: {kb_data[:200]}...")
 
                     # Add success metrics to span
@@ -132,13 +132,13 @@ class KnowledgeBaseService:
                         "result_format": "string",
                         "answer_length": len(kb_data),
                         "confidence": 1.0,
-                        "source": "Lombardy Knowledge Base"
+                        "source": "Piemonte Knowledge Base"
                     })
 
                     return KnowledgeBaseResult(
                         answer=kb_data,
-                        confidence=1.0,  # Lombardy doesn't provide confidence, assume high
-                        source="Lombardy Knowledge Base",
+                        confidence=1.0,  # Piemonte doesn't provide confidence, assume high
+                        source="Piemonte Knowledge Base",
                         success=True
                     )
 

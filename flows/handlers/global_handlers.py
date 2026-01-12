@@ -57,7 +57,7 @@ async def global_knowledge_base(
             if session_id:
                 call_extractor = get_call_extractor(session_id)
                 call_extractor.add_function_call(
-                    function_name="knowledge_base_lombardia",
+                    function_name="knowledge_base_new",
                     parameters={"query": query},
                     result={"confidence": result.confidence, "source": result.source}
                 )
@@ -368,7 +368,7 @@ async def global_clinic_info(
             if session_id:
                 call_extractor = get_call_extractor(session_id)
                 call_extractor.add_function_call(
-                    function_name="call_graph_lombardia",
+                    function_name="call_graph",
                     parameters={"query": query},
                     result={"success": True}
                 )

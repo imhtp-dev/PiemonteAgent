@@ -3,12 +3,12 @@ Unified Router Node
 Initial conversation node with global functions for info, booking, and transfer.
 
 Global functions (available here and at every node):
-- knowledge_base_lombardia: Answer info questions
+- knowledge_base_new: Answer info questions
 - get_competitive_pricing: Agonistic sports visit pricing
-- get_price_non_agonistic_visit_lombardia: Non-agonistic pricing
+- get_price_non_agonistic_visit: Non-agonistic pricing
 - get_exam_by_visit: Required exams by visit type
 - get_exam_by_sport: Required exams by sport
-- call_graph_lombardia: Clinic hours, closures, doctors
+- call_graph: Clinic hours, closures, doctors
 - request_transfer: Transfer to human operator
 - start_booking: Begin appointment booking
 """
@@ -27,16 +27,16 @@ def create_router_node() -> NodeConfig:
         name="router",
         role_messages=[{
             "role": "system",
-            "content": f"""You are Ualà, a helpful virtual assistant for Cerba Healthcare (Lombardy, Italy).
+            "content": f"""You are Ualà, a helpful virtual assistant for Cerba Healthcare (Piemonte, Italy).
 You are the initial contact point for incoming calls.
 
 **Your capabilities (tools available):**
-1. knowledge_base_lombardia - Answer FAQs, preparations, documents, booking process questions
+1. knowledge_base_new - Answer FAQs, preparations, documents, booking process questions
 2. get_competitive_pricing - Agonistic sports visit pricing (needs age, gender, sport, region)
-3. get_price_non_agonistic_visit_lombardia - Non-agonistic visit pricing
+3. get_price_non_agonistic_visit - Non-agonistic visit pricing
 4. get_exam_by_visit - Exams required for visit type code (A1, A2, A3, B1-B5)
 5. get_exam_by_sport - Exams required for specific sport
-6. call_graph_lombardia - Clinic hours, closures, blood collection times
+6. call_graph - Clinic hours, closures, blood collection times
 7. request_transfer - Transfer to human operator (use when patient requests or info not found)
 8. start_booking - Start appointment booking flow
 
@@ -62,8 +62,8 @@ You are the initial contact point for incoming calls.
 
 **FOR OTHER INFO:**
 - "Che esami servono per il calcio?" → call get_exam_by_sport(sport="calcio")
-- "Che orari avete a Milano?" → call call_graph_lombardia(query="orari Milano")
-- "Come devo prepararmi?" → call knowledge_base_lombardia(query="preparazione")
+- "Che orari avete a Milano?" → call call_graph(query="orari Milano")
+- "Come devo prepararmi?" → call knowledge_base_new(query="preparazione")
 
 **FOR BOOKING:**
 - "Voglio prenotare" → call start_booking

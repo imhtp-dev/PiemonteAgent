@@ -195,7 +195,7 @@ class PricingService:
                         {
                             "toolCallId": "pipecat_non_agonistic_pricing",
                             "function": {
-                                "name": "get_price_non_agonistic_visit_lombardia",
+                                "name": "get_price_non_agonistic_visit",
                                 "arguments": json.dumps({"ecg_under_stress": ecg_under_stress})
                             }
                         }

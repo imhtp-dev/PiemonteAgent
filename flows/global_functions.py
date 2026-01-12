@@ -25,7 +25,7 @@ from flows.handlers.global_handlers import (
 GLOBAL_FUNCTIONS = [
     # 1. Knowledge Base - General FAQ queries
     FlowsFunctionSchema(
-        name="knowledge_base_lombardia",
+        name="knowledge_base_new",
         description="Search knowledge base for general info about services, exam preparations, required documents, forms, company policies, and booking process questions. Use for: 'Come si fa...', 'Cosa devo portare...', 'È obbligatorio...', 'Siete convenzionati...', 'Come prenotare?'",
         properties={
             "query": {
@@ -66,7 +66,7 @@ GLOBAL_FUNCTIONS = [
 
     # 3. Non-Competitive Pricing
     FlowsFunctionSchema(
-        name="get_price_non_agonistic_visit_lombardia",
+        name="get_price_non_agonistic_visit",
         description="Get price for non-agonistic/non-competitive sports medical visit. Only need to know if ECG under stress is required.",
         properties={
             "ecg_under_stress": {
@@ -109,7 +109,7 @@ GLOBAL_FUNCTIONS = [
 
     # 6. Clinic Info (Call Graph)
     FlowsFunctionSchema(
-        name="call_graph_lombardia",
+        name="call_graph",
         description="Get clinic information: opening hours, closures, blood collection times, available doctors. Include location in query.",
         properties={
             "query": {
