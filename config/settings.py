@@ -136,7 +136,7 @@ class Settings:
         return {
             "knowledge_base_lombardia": os.getenv(
                 "KNOWLEDGE_BASE_LOMBARDIA_URL",
-                f"{base_url}/lombardia/rag_lombardia"
+                f"{base_url}/query_new"
             ),
             "exam_by_visit": os.getenv(
                 "EXAM_BY_VISIT_URL",
@@ -148,15 +148,15 @@ class Settings:
             ),
             "price_non_agonistic": os.getenv(
                 "PRICE_NON_AGONISTIC_URL",
-                f"{base_url}/lombardia/get_price_non_agonistic_visit_lombardia"
+                f"{base_url}/get_price_non_agonistic_visit_lombardia"
             ),
             "price_agonistic": os.getenv(
                 "PRICE_AGONISTIC_URL",
-                f"{base_url}/lombardia/get_price_agonistic_visit"
+                f"{base_url}/get_price_agonistic_visit"
             ),
             "call_graph_lombardia": os.getenv(
                 "CALL_GRAPH_LOMBARDIA_URL",
-                f"{base_url}/lombardia/graph_lombardia"
+                f"{base_url}/call_graph"
             )
         }
 
