@@ -4,7 +4,8 @@ Patient details collection nodes for booking finalization
 
 from pipecat_flows import NodeConfig, FlowsFunctionSchema, ContextStrategyConfig, ContextStrategy
 from flows.handlers.patient_detail_handlers import (
-    collect_full_name_and_transition,
+    collect_first_name_and_transition,
+    collect_surname_and_transition,
     collect_phone_and_transition,
     confirm_phone_and_transition,
     # EMAIL REMOVED: collect_email_and_transition,
@@ -18,33 +19,72 @@ from config.settings import settings
 
 def create_collect_full_name_node() -> NodeConfig:
     """
-    Create full name collection node (name + surname combined)
+    Create first name collection node
+
+    IMPORTANT: Context is reset at this node to clear heavy slot data from previous booking search.
+    This prevents context window bloat while keeping only essential booking summary.
+    """
+    return create_collect_first_name_node()
+
+
+def create_collect_first_name_node() -> NodeConfig:
+    """
+    Create first name collection node (nome)
 
     IMPORTANT: Context is reset at this node to clear heavy slot data from previous booking search.
     This prevents context window bloat while keeping only essential booking summary.
     """
     return NodeConfig(
-        name="collect_full_name",
+        name="collect_first_name",
         role_messages=[{
             "role": "system",
-            "content": f"Collect the patient's complete full name (first name and surname together). {settings.language_config}"
+            "content": f"Collect the patient's first name only (nome). Do NOT ask for surname yet. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",
-            "content": "What is your full name?"
+            "content": "What is your first name? (Solo il nome, per favore)"
         }],
         functions=[
             FlowsFunctionSchema(
-                name="collect_full_name",
-                handler=collect_full_name_and_transition,
-                description="Collect the patient's complete full name",
+                name="collect_first_name",
+                handler=collect_first_name_and_transition,
+                description="Collect the patient's first name only",
                 properties={
-                    "full_name": {
+                    "first_name": {
                         "type": "string",
-                        "description": "Patient's complete full name (first name and surname)"
+                        "description": "Patient's first name only (nome)"
                     }
                 },
-                required=["full_name"]
+                required=["first_name"]
+            )
+        ]
+    )
+
+
+def create_collect_surname_node() -> NodeConfig:
+    """Create surname collection node (cognome)"""
+    return NodeConfig(
+        name="collect_surname",
+        role_messages=[{
+            "role": "system",
+            "content": f"Collect the patient's surname/last name only (cognome). {settings.language_config}"
+        }],
+        task_messages=[{
+            "role": "system",
+            "content": "And what is your surname? (E il cognome?)"
+        }],
+        functions=[
+            FlowsFunctionSchema(
+                name="collect_surname",
+                handler=collect_surname_and_transition,
+                description="Collect the patient's surname/last name only",
+                properties={
+                    "surname": {
+                        "type": "string",
+                        "description": "Patient's surname/last name only (cognome)"
+                    }
+                },
+                required=["surname"]
             )
         ]
     )

@@ -54,7 +54,7 @@ async def handle_patient_summary_response(args: FlowArgs, flow_manager: FlowMana
 
         # Get current patient data from state to recreate summary
         current_patient = {
-            "first_name": flow_manager.state.get("patient_name", ""),
+            "first_name": flow_manager.state.get("patient_first_name", ""),
             "last_name": flow_manager.state.get("patient_surname", ""),
             "phone": flow_manager.state.get("patient_phone", "")
         }
@@ -88,8 +88,9 @@ async def handle_name_edit(args: FlowArgs, flow_manager: FlowManager) -> Tuple[D
         }, None
 
     # Update state with corrected names
-    flow_manager.state["patient_name"] = first_name
+    flow_manager.state["patient_first_name"] = first_name
     flow_manager.state["patient_surname"] = last_name
+    flow_manager.state["patient_full_name"] = f"{first_name} {last_name}"
 
     logger.info(f"📝 Name updated for patient {patient_id}: {first_name} {last_name}")
 
@@ -142,7 +143,7 @@ async def handle_phone_edit(args: FlowArgs, flow_manager: FlowManager) -> Tuple[
 
     # Return to summary with updated data
     updated_patient = {
-        "first_name": flow_manager.state.get("patient_name", ""),
+        "first_name": flow_manager.state.get("patient_first_name", ""),
         "last_name": flow_manager.state.get("patient_surname", ""),
         "phone": normalized_phone
     }
@@ -188,7 +189,7 @@ async def handle_fiscal_code_edit(args: FlowArgs, flow_manager: FlowManager) -> 
 
     # Return to summary with updated data
     updated_patient = {
-        "first_name": flow_manager.state.get("patient_name", ""),
+        "first_name": flow_manager.state.get("patient_first_name", ""),
         "last_name": flow_manager.state.get("patient_surname", ""),
         "phone": flow_manager.state.get("patient_phone", ""),
         "fiscal_code": fiscal_code

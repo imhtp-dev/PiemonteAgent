@@ -109,7 +109,7 @@ async def perform_center_search_and_transition(args: FlowArgs, flow_manager: Flo
                 max_retries=2,
                 retry_delay=1.0,
                 func_name="Health Center Search API",
-                uuids=service_uuids,
+                health_services=service_uuids,
                 gender=gender,
                 date_of_birth=dob_formatted,
                 address=address

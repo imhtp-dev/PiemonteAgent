@@ -156,14 +156,16 @@ def populate_patient_state(flow_manager, patient: Dict[str, Any]) -> None:
     if not patient:
         return
 
-    # Combine first and last name into full_name
+    # Get first and last name separately
     first_name = patient.get('first_name', '')
     last_name = patient.get('last_name', '')
     full_name = f"{first_name} {last_name}".strip()
 
-    # Populate all patient fields in state
+    # Populate all patient fields in state - store names separately AND combined
     flow_manager.state.update({
-        "patient_full_name": full_name,  # Store combined full name
+        "patient_first_name": first_name,  # Store first name separately
+        "patient_surname": last_name,  # Store surname separately
+        "patient_full_name": full_name,  # Store combined full name for backward compatibility
         "patient_phone": patient.get('phone', ''),
         "patient_email": patient.get('email', ''),
         "generated_fiscal_code": patient.get('fiscal_code', ''),
@@ -172,7 +174,7 @@ def populate_patient_state(flow_manager, patient: Dict[str, Any]) -> None:
     })
 
     patient_id = get_patient_id_for_logging(patient)
-    logger.success(f"✅ Patient state populated for ID={patient_id}")
+    logger.success(f"✅ Patient state populated for ID={patient_id}: {first_name} {last_name}")
 
 
 def get_patient_summary_text(patient: Dict[str, Any]) -> str:

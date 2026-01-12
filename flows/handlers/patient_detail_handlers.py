@@ -10,23 +10,49 @@ from services.call_logger import call_logger
 
 
 
-async def collect_full_name_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
-    """Collect patient full name (name + surname combined) and transition to phone collection"""
-    full_name = args.get("full_name", "").strip()
+async def collect_first_name_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
+    """Collect patient first name and transition to surname collection"""
+    first_name = args.get("first_name", "").strip()
 
-    if not full_name or len(full_name) < 2:
-        return {"success": False, "message": "Please provide your full name"}, None
+    if not first_name or len(first_name) < 2:
+        return {"success": False, "message": "Please provide your first name"}, None
 
-    # Store full name as-is (NO PARSING)
-    flow_manager.state["patient_full_name"] = full_name
+    # Store first name separately
+    flow_manager.state["patient_first_name"] = first_name
 
-    logger.info(f"👤 Patient full name collected: {full_name}")
+    logger.info(f"👤 Patient first name collected: {first_name}")
+
+    from flows.nodes.patient_details import create_collect_surname_node
+    return {
+        "success": True,
+        "first_name": first_name,
+        "message": "First name collected successfully"
+    }, create_collect_surname_node()
+
+
+async def collect_surname_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
+    """Collect patient surname and transition to phone collection"""
+    surname = args.get("surname", "").strip()
+
+    if not surname or len(surname) < 2:
+        return {"success": False, "message": "Please provide your surname"}, None
+
+    # Store surname separately
+    flow_manager.state["patient_surname"] = surname
+
+    # Also store combined full name for backward compatibility
+    first_name = flow_manager.state.get("patient_first_name", "")
+    flow_manager.state["patient_full_name"] = f"{first_name} {surname}"
+
+    logger.info(f"👤 Patient surname collected: {surname}")
+    logger.info(f"👤 Full name: {first_name} {surname}")
 
     from flows.nodes.patient_details import create_collect_phone_node
     return {
         "success": True,
-        "full_name": full_name,
-        "message": "Full name collected successfully"
+        "surname": surname,
+        "full_name": f"{first_name} {surname}",
+        "message": "Surname collected successfully"
     }, create_collect_phone_node()
 
 
@@ -254,8 +280,9 @@ async def confirm_details_and_create_booking(args: FlowArgs, flow_manager: FlowM
         if not selected_slot_exists:
             logger.error("❌ DEBUG: No selected_slot found in state - this is a problem!")
 
-    # Get patient data with extensive logging
-    full_name = flow_manager.state.get("patient_full_name", "")
+    # Get patient data with extensive logging - using separate first name and surname
+    patient_first_name = flow_manager.state.get("patient_first_name", "")
+    patient_surname = flow_manager.state.get("patient_surname", "")
     patient_phone = flow_manager.state.get("patient_phone", "")
     patient_email = flow_manager.state.get("patient_email", "")
 
@@ -270,11 +297,11 @@ async def confirm_details_and_create_booking(args: FlowArgs, flow_manager: FlowM
         patient_fiscal_code = "NWTSCI80A01F205A"
         logger.info(f"🔧 Using hardcoded fiscal code for new patient: {patient_fiscal_code}")
 
-    # TEMPORARY: Send full_name to BOTH name and surname API fields
-    patient_name = full_name
-    patient_surname = full_name
+    # Use separate first name and surname for API
+    patient_name = patient_first_name
 
-    logger.info(f"🔍 DEBUG: patient_full_name = '{full_name}'")
+    logger.info(f"🔍 DEBUG: patient_first_name = '{patient_first_name}'")
+    logger.info(f"🔍 DEBUG: patient_surname = '{patient_surname}'")
     logger.info(f"🔍 DEBUG: patient_name (for API) = '{patient_name}'")
     logger.info(f"🔍 DEBUG: patient_surname (for API) = '{patient_surname}'")
     logger.info(f"🔍 DEBUG: patient_phone = '{patient_phone}'")
