@@ -5,7 +5,8 @@ Pipeline components setup for TTS, STT, and LLM services
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai.llm import OpenAILLMService
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.frames.frames import StartFrame
 from deepgram import LiveOptions
 from loguru import logger
@@ -209,6 +210,6 @@ def create_llm_service() -> OpenAILLMService:
     )
 
 
-def create_context_aggregator(llm_service: OpenAILLMService) -> OpenAILLMContext:
-    """Create context aggregator for the LLM"""
-    return llm_service.create_context_aggregator(OpenAILLMContext([]))
+def create_context_aggregator(llm_service: OpenAILLMService) -> LLMContextAggregatorPair:
+    """Create context aggregator for the LLM using universal LLMContext"""
+    return LLMContextAggregatorPair(LLMContext())

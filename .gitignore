@@ -171,6 +171,7 @@ _refs/
 # Claude Code files
 .claude/
 CLAUDE.md
+.agents/
 
 # Documentation folders (not needed in repo)
 docs/

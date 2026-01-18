@@ -35,7 +35,7 @@ from pipecat.processors.transcript_processor import TranscriptProcessor
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
@@ -578,13 +578,17 @@ async def websocket_endpoint(websocket: WebSocket):
             logger.info(f"📝 Started transcript recording for session: {session_id}")
             logger.info(f"📊 Transcript manager initialized with {len(session_transcript_manager.conversation_log)} messages")
 
-            # Initialize call_extractor for info agent (EARLY - to capture ALL messages including router)
+            # Initialize call_extractor for ALL calls (EARLY - to capture ALL messages including router)
             from services.call_data_extractor import get_call_extractor
             call_extractor = get_call_extractor(session_id)
             call_extractor.call_id = session_id  # Override with session_id from bridge
             call_extractor.interaction_id = interaction_id  # Store Talkdesk interaction ID
             flow_manager.state["call_extractor"] = call_extractor
-            logger.info(f"📊 Call extractor initialized for info agent (will capture all messages)")
+
+            # ✅ CRITICAL: Start call recording NOW to capture started_at timestamp
+            call_extractor.start_call(caller_phone=caller_phone, interaction_id=interaction_id)
+            logger.info(f"📊 Call extractor initialized and started (capturing all messages)")
+            logger.info(f"⏱️ Call start time recorded: {call_extractor.started_at}")
 
             # Initialize flow manager
             try:
@@ -597,41 +601,28 @@ async def websocket_endpoint(websocket: WebSocket):
         async def on_client_disconnected(transport_obj, ws):
             logger.info(f"🔌 Healthcare Flow Client disconnected: {session_id}")
 
-            # Extract and store call data before cleanup
-            # Route to appropriate storage based on which agent handled the call
+            # Extract and store ALL call data to Supabase (unified storage)
             try:
                 current_agent = flow_manager.state.get("current_agent", "unknown")
                 logger.info(f"📊 Extracting call data for session: {session_id} | Agent: {current_agent}")
 
-                if current_agent == "info":
-                    # INFO AGENT: Use Supabase storage via call_data_extractor
-                    logger.info("🟠 INFO AGENT call - routing to Supabase storage")
+                # ✅ UNIFIED: All calls go to Supabase via call_data_extractor
+                logger.info("💾 Saving call data to Supabase (unified storage)")
 
-                    call_extractor = flow_manager.state.get("call_extractor")
-                    if call_extractor:
-                        # ✅ CRITICAL: Mark call end time before saving
-                        call_extractor.end_call()
-                        success = await call_extractor.save_to_database(flow_manager.state)
-                        if success:
-                            logger.success(f"✅ Info agent call data saved to Supabase for session: {session_id}")
-
-                            # Report to Talkdesk (only if not transferred to human operator)
-                            await report_to_talkdesk(flow_manager, call_extractor)
-                        else:
-                            logger.error(f"❌ Failed to save info agent call data to Supabase: {session_id}")
-                    else:
-                        logger.error("❌ No call_extractor found in flow_manager.state for info agent")
-
-                else:
-                    # BOOKING AGENT (or unknown/router): Use Azure Blob Storage via transcript_manager
-                    logger.info(f"🟢 BOOKING AGENT call - routing to Azure Blob Storage")
-
-                    session_transcript_manager = get_transcript_manager(session_id)
-                    success = await session_transcript_manager.extract_and_store_call_data(flow_manager)
+                call_extractor = flow_manager.state.get("call_extractor")
+                if call_extractor:
+                    # ✅ CRITICAL: Mark call end time before saving
+                    call_extractor.end_call()
+                    success = await call_extractor.save_to_database(flow_manager.state)
                     if success:
-                        logger.success(f"✅ Booking agent call data saved to Azure for session: {session_id}")
+                        logger.success(f"✅ Call data saved to Supabase for session: {session_id}")
+
+                        # Report to Talkdesk (only if not transferred to human operator)
+                        await report_to_talkdesk(flow_manager, call_extractor)
                     else:
-                        logger.error(f"❌ Failed to save booking agent call data to Azure: {session_id}")
+                        logger.error(f"❌ Failed to save call data to Supabase: {session_id}")
+                else:
+                    logger.error("❌ No call_extractor found in flow_manager.state")
 
             except Exception as e:
                 logger.error(f"❌ Error during call data extraction: {e}")
@@ -651,39 +642,28 @@ async def websocket_endpoint(websocket: WebSocket):
         async def on_session_timeout(transport_obj, ws):
             logger.warning(f"⏱️ Session timeout: {session_id}")
 
-            # Extract and store call data before cleanup (even on timeout)
-            # Route to appropriate storage based on which agent handled the call
+            # Extract and store ALL call data to Supabase (unified storage)
             try:
                 current_agent = flow_manager.state.get("current_agent", "unknown")
                 logger.info(f"📊 Extracting call data for timed-out session: {session_id} | Agent: {current_agent}")
 
-                if current_agent == "info":
-                    # INFO AGENT: Use Supabase storage via call_data_extractor
-                    logger.info("🟠 INFO AGENT call (timeout) - routing to Supabase storage")
+                # ✅ UNIFIED: All calls go to Supabase via call_data_extractor
+                logger.info("💾 Saving call data to Supabase (unified storage - timeout)")
 
-                    call_extractor = flow_manager.state.get("call_extractor")
-                    if call_extractor:
-                        success = await call_extractor.save_to_database(flow_manager.state)
-                        if success:
-                            logger.success(f"✅ Info agent call data saved to Supabase (timeout): {session_id}")
-
-                            # Report to Talkdesk (only if not transferred to human operator)
-                            await report_to_talkdesk(flow_manager, call_extractor)
-                        else:
-                            logger.error(f"❌ Failed to save info agent call data to Supabase (timeout): {session_id}")
-                    else:
-                        logger.error("❌ No call_extractor found in flow_manager.state for info agent (timeout)")
-
-                else:
-                    # BOOKING AGENT (or unknown/router): Use Azure Blob Storage via transcript_manager
-                    logger.info(f"🟢 BOOKING AGENT call (timeout) - routing to Azure Blob Storage")
-
-                    session_transcript_manager = get_transcript_manager(session_id)
-                    success = await session_transcript_manager.extract_and_store_call_data(flow_manager)
+                call_extractor = flow_manager.state.get("call_extractor")
+                if call_extractor:
+                    # ✅ CRITICAL: Mark call end time before saving
+                    call_extractor.end_call()
+                    success = await call_extractor.save_to_database(flow_manager.state)
                     if success:
-                        logger.success(f"✅ Booking agent call data saved to Azure (timeout): {session_id}")
+                        logger.success(f"✅ Call data saved to Supabase (timeout): {session_id}")
+
+                        # Report to Talkdesk (only if not transferred to human operator)
+                        await report_to_talkdesk(flow_manager, call_extractor)
                     else:
-                        logger.error(f"❌ Failed to save booking agent call data to Azure (timeout): {session_id}")
+                        logger.error(f"❌ Failed to save call data to Supabase (timeout): {session_id}")
+                else:
+                    logger.error("❌ No call_extractor found in flow_manager.state (timeout)")
 
             except Exception as e:
                 logger.error(f"❌ Error during timeout call data extraction: {e}")
@@ -715,73 +695,60 @@ async def websocket_endpoint(websocket: WebSocket):
         import traceback
         traceback.print_exc()
     finally:
-        # Extract and store call data before cleanup
-        # Route to appropriate storage based on which agent handled the call
+        # Extract and store ALL call data to Supabase (unified storage)
         # DUPLICATE LOGIC: Also in event handlers, but MUST be in finally block too
         # because event handlers don't always fire (e.g., escalation transfers)
         try:
             current_agent = flow_manager.state.get("current_agent", "unknown")
             logger.info(f"📊 [FINALLY BLOCK] Extracting call data for session: {session_id} | Agent: {current_agent}")
 
-            if current_agent == "info":
-                # INFO AGENT: Use Supabase storage via call_data_extractor
-                logger.info("🟠 [FINALLY BLOCK] INFO AGENT call - routing to Supabase storage")
+            # ✅ UNIFIED: All calls go to Supabase via call_data_extractor
+            logger.info("💾 [FINALLY BLOCK] Saving call data to Supabase (unified storage)")
 
-                call_extractor = flow_manager.state.get("call_extractor")
-                if call_extractor:
-                    # ✅ Query LangFuse for token usage before saving to Supabase
-                    if os.getenv("ENABLE_TRACING", "false").lower() == "true":
-                        logger.info("📊 Querying LangFuse for token usage...")
-                        try:
-                            # Wait briefly for Pipecat's BatchSpanProcessor to queue final spans
-                            # The conversation tracing just ended, spans need time to be queued
-                            logger.info("⏳ Waiting 1 second for spans to be queued...")
-                            await asyncio.sleep(1)
+            call_extractor = flow_manager.state.get("call_extractor")
+            if call_extractor:
+                # ✅ Query LangFuse for token usage before saving to Supabase
+                if os.getenv("ENABLE_TRACING", "false").lower() == "true":
+                    logger.info("📊 Querying LangFuse for token usage...")
+                    try:
+                        # Wait briefly for Pipecat's BatchSpanProcessor to queue final spans
+                        # The conversation tracing just ended, spans need time to be queued
+                        logger.info("⏳ Waiting 1 second for spans to be queued...")
+                        await asyncio.sleep(1)
 
-                            # CRITICAL: Flush traces to LangFuse BEFORE querying
-                            # Otherwise spans are still in BatchSpanProcessor queue
-                            logger.info("🔄 Flushing traces to LangFuse before token query...")
-                            flush_traces()
+                        # CRITICAL: Flush traces to LangFuse BEFORE querying
+                        # Otherwise spans are still in BatchSpanProcessor queue
+                        logger.info("🔄 Flushing traces to LangFuse before token query...")
+                        flush_traces()
 
-                            # Wait for LangFuse to index the traces
-                            # Production needs more time due to cloud indexing latency
-                            logger.info("⏳ Waiting 5 seconds for LangFuse to index traces...")
-                            await asyncio.sleep(5)
+                        # Wait for LangFuse to index the traces
+                        # Production needs more time due to cloud indexing latency
+                        logger.info("⏳ Waiting 5 seconds for LangFuse to index traces...")
+                        await asyncio.sleep(5)
 
-                            # Get token usage from LangFuse
-                            token_data = await get_conversation_tokens(session_id)
+                        # Get token usage from LangFuse
+                        token_data = await get_conversation_tokens(session_id)
 
-                            # Update call_extractor with token data
-                            call_extractor.llm_token_count = token_data["total_tokens"]
-                            logger.success(f"✅ Updated call_extractor with LangFuse tokens: {token_data['total_tokens']}")
+                        # Update call_extractor with token data
+                        call_extractor.llm_token_count = token_data["total_tokens"]
+                        logger.success(f"✅ Updated call_extractor with LangFuse tokens: {token_data['total_tokens']}")
 
-                        except Exception as e:
-                            logger.error(f"❌ Failed to retrieve tokens from LangFuse: {e}")
-                            # Continue with save even if LangFuse query fails
+                    except Exception as e:
+                        logger.error(f"❌ Failed to retrieve tokens from LangFuse: {e}")
+                        # Continue with save even if LangFuse query fails
 
-                    # ✅ CRITICAL: Mark call end time before saving
-                    call_extractor.end_call()
-                    success = await call_extractor.save_to_database(flow_manager.state)
-                    if success:
-                        logger.success(f"✅ [FINALLY BLOCK] Info agent call data saved to Supabase for session: {session_id}")
-
-                        # Report to Talkdesk (only if not transferred to human operator)
-                        await report_to_talkdesk(flow_manager, call_extractor)
-                    else:
-                        logger.error(f"❌ [FINALLY BLOCK] Failed to save info agent call data to Supabase: {session_id}")
-                else:
-                    logger.error("❌ [FINALLY BLOCK] No call_extractor found in flow_manager.state for info agent")
-
-            else:
-                # BOOKING AGENT (or unknown/router): Use Azure Blob Storage via transcript_manager
-                logger.info(f"🟢 [FINALLY BLOCK] BOOKING AGENT call - routing to Azure Blob Storage")
-
-                session_transcript_manager = get_transcript_manager(session_id)
-                success = await session_transcript_manager.extract_and_store_call_data(flow_manager)
+                # ✅ CRITICAL: Mark call end time before saving
+                call_extractor.end_call()
+                success = await call_extractor.save_to_database(flow_manager.state)
                 if success:
-                    logger.success(f"✅ [FINALLY BLOCK] Booking agent call data saved to Azure for session: {session_id}")
+                    logger.success(f"✅ [FINALLY BLOCK] Call data saved to Supabase for session: {session_id}")
+
+                    # Report to Talkdesk (only if not transferred to human operator)
+                    await report_to_talkdesk(flow_manager, call_extractor)
                 else:
-                    logger.error(f"❌ [FINALLY BLOCK] Failed to save booking agent call data to Azure: {session_id}")
+                    logger.error(f"❌ [FINALLY BLOCK] Failed to save call data to Supabase: {session_id}")
+            else:
+                logger.error("❌ [FINALLY BLOCK] No call_extractor found in flow_manager.state")
 
         except Exception as e:
             logger.error(f"❌ [FINALLY BLOCK] Error during call data extraction: {e}")

@@ -63,7 +63,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 
 # OpenTelemetry for LangFuse tracing
 from config.telemetry import setup_tracing, get_tracer, get_conversation_tokens, flush_traces
@@ -1133,13 +1133,15 @@ async def websocket_endpoint(websocket: WebSocket):
         session_transcript_manager.start_session(session_id)
         logger.info(f"📝 Started transcript recording for session: {session_id}")
 
-        # Initialize call_extractor for info agent (to capture ALL messages from start)
+        # Initialize call_extractor for ALL calls (to capture ALL messages from start)
         from services.call_data_extractor import get_call_extractor
         call_extractor = get_call_extractor(session_id)
         call_extractor.call_id = session_id
         call_extractor.interaction_id = "d2568ef3-b8c9-4cbc-ac90-6100d4c0e8c0"
         flow_manager.state["call_extractor"] = call_extractor
-        logger.info(f"📊 Call extractor initialized (will capture all messages from start)")
+        call_extractor.start_call(caller_phone=global_caller_phone or "+393333319326", interaction_id="d2568ef3-b8c9-4cbc-ac90-6100d4c0e8c0")
+        logger.info(f"✅ Call extractor initialized for Supabase storage")
+        logger.info(f"⏱️ Call start time recorded: {call_extractor.started_at}")
 
         # Store session
         active_sessions[session_id] = {
@@ -1218,74 +1220,53 @@ async def websocket_endpoint(websocket: WebSocket):
         # Cleanup
         if session_id in active_sessions:
             # Extract and store call data before cleanup
-            # Route to appropriate storage based on which agent handled the call
+            # Save to BOTH Azure AND Supabase for ALL calls
             try:
                 flow_manager = active_sessions[session_id].get("flow_manager")
                 if flow_manager:
                     current_agent = flow_manager.state.get("current_agent", "unknown")
                     logger.info(f"📊 Extracting call data for session: {session_id} | Agent: {current_agent}")
 
-                    if current_agent == "info":
-                        # INFO AGENT: Use Supabase storage via call_data_extractor
-                        logger.info("🟠 INFO AGENT call - routing to Supabase storage")
+                    # === STEP 1: Save to Supabase (ALL calls) ===
+                    logger.info("🔵 Saving to Supabase...")
+                    call_extractor = flow_manager.state.get("call_extractor")
+                    if call_extractor:
+                        # Query LangFuse for token usage before saving
+                        if os.getenv("ENABLE_TRACING", "false").lower() == "true":
+                            logger.info("📊 Querying LangFuse for token usage...")
+                            try:
+                                logger.info("⏳ Waiting 1 second for spans to be queued...")
+                                await asyncio.sleep(1)
+                                logger.info("🔄 Flushing traces to LangFuse...")
+                                flush_traces()
+                                logger.info("⏳ Waiting 5 seconds for LangFuse to index traces...")
+                                await asyncio.sleep(5)
+                                token_data = await get_conversation_tokens(session_id)
+                                call_extractor.llm_token_count = token_data["total_tokens"]
+                                logger.success(f"✅ Updated call_extractor with LangFuse tokens: {token_data['total_tokens']}")
+                            except Exception as e:
+                                logger.error(f"❌ Failed to retrieve tokens from LangFuse: {e}")
 
-                        call_extractor = flow_manager.state.get("call_extractor")
-                        if call_extractor:
-                            # ✅ CRITICAL: Mark call end time before saving
-                            call_extractor.end_call() 
-
-                            # ✅ Query LangFuse for token usage before saving to Supabase
-                            if os.getenv("ENABLE_TRACING", "false").lower() == "true":
-                                logger.info("📊 Querying LangFuse for token usage...")
-                                try:
-                                    # Wait briefly for Pipecat's BatchSpanProcessor to queue final spans
-                                    # The conversation tracing just ended, spans need time to be queued
-                                    logger.info("⏳ Waiting 1 second for spans to be queued...")
-                                    await asyncio.sleep(1)
-
-                                    # CRITICAL: Flush traces to LangFuse BEFORE querying
-                                    # Otherwise spans are still in BatchSpanProcessor queue
-                                    logger.info("🔄 Flushing traces to LangFuse before token query...")
-                                    flush_traces()
-
-                                    # Wait for LangFuse to index the traces
-                                    # Production needs more time due to cloud indexing latency
-                                    logger.info("⏳ Waiting 5 seconds for LangFuse to index traces...")
-                                    await asyncio.sleep(5)
-
-                                    # Get token usage from LangFuse using session_id
-                                    # This works because we set langfuse.session.id attribute in PipelineTask
-                                    token_data = await get_conversation_tokens(session_id)
-
-                                    # Update call_extractor with token data
-                                    call_extractor.llm_token_count = token_data["total_tokens"]
-                                    logger.success(f"✅ Updated call_extractor with LangFuse tokens: {token_data['total_tokens']}")
-
-                                except Exception as e:
-                                    logger.error(f"❌ Failed to retrieve tokens from LangFuse: {e}")
-                                    # Continue with save even if LangFuse query fails
-
-                            success = await call_extractor.save_to_database(flow_manager.state)
-                            if success:
-                                logger.success(f"✅ Info agent call data saved to Supabase for session: {session_id}")
-
-                                # Report to Talkdesk (only if not transferred to human operator)
-                                await report_to_talkdesk(flow_manager, call_extractor)
-                            else:
-                                logger.error(f"❌ Failed to save info agent call data to Supabase: {session_id}")
+                        # Mark call end time and save to Supabase
+                        call_extractor.end_call()
+                        supabase_success = await call_extractor.save_to_database(flow_manager.state)
+                        if supabase_success:
+                            logger.success(f"✅ Call data saved to Supabase for session: {session_id}")
+                            # Report to Talkdesk (only if not transferred to human operator)
+                            await report_to_talkdesk(flow_manager, call_extractor)
                         else:
-                            logger.error("❌ No call_extractor found in flow_manager.state for info agent")
-
+                            logger.error(f"❌ Failed to save call data to Supabase: {session_id}")
                     else:
-                        # BOOKING AGENT (or unknown/router): Use Azure Blob Storage via transcript_manager
-                        logger.info(f"🟢 BOOKING AGENT call - routing to Azure Blob Storage")
+                        logger.error("❌ No call_extractor found - Supabase save skipped")
 
-                        session_transcript_manager = get_transcript_manager(session_id)
-                        success = await session_transcript_manager.extract_and_store_call_data(flow_manager)
-                        if success:
-                            logger.success(f"✅ Booking agent call data saved to Azure for session: {session_id}")
-                        else:
-                            logger.error(f"❌ Failed to save booking agent call data to Azure: {session_id}")
+                    # === STEP 2: Save to Azure Blob Storage (ALL calls) ===
+                    logger.info("🟢 Saving to Azure Blob Storage...")
+                    session_transcript_manager = get_transcript_manager(session_id)
+                    azure_success = await session_transcript_manager.extract_and_store_call_data(flow_manager)
+                    if azure_success:
+                        logger.success(f"✅ Call data saved to Azure for session: {session_id}")
+                    else:
+                        logger.error(f"❌ Failed to save call data to Azure: {session_id}")
                 else:
                     logger.warning(f"⚠️ No flow_manager found for session: {session_id}")
 

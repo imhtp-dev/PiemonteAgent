@@ -19,10 +19,57 @@ import os
 import sys
 import asyncio
 import argparse
+import time
 import aiohttp
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 from loguru import logger
+
+
+# ============================================================================
+# LATENCY TRACKER - For comparing with Gemini Live
+# ============================================================================
+
+class LatencyTracker:
+    """Track latency metrics for comparison with voice_test2.py (Gemini Live)."""
+
+    def __init__(self):
+        self.ttfb_values: list[float] = []
+        self.function_calls: list[dict] = []
+        self.session_start = time.time()
+
+    def add_ttfb(self, ttfb_seconds: float):
+        """Add a TTFB value (in seconds)"""
+        ttfb_ms = ttfb_seconds * 1000
+        self.ttfb_values.append(ttfb_ms)
+        logger.success(f"📊 TTFB #{len(self.ttfb_values)}: {ttfb_ms:.0f}ms")
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get latency statistics"""
+        if not self.ttfb_values:
+            return {"count": 0, "avg": 0, "min": 0, "max": 0, "session_duration": 0}
+
+        return {
+            "count": len(self.ttfb_values),
+            "avg": sum(self.ttfb_values) / len(self.ttfb_values),
+            "min": min(self.ttfb_values),
+            "max": max(self.ttfb_values),
+            "session_duration": time.time() - self.session_start,
+            "function_calls": len(self.function_calls)
+        }
+
+    def print_summary(self):
+        """Print final summary for comparison with Gemini Live"""
+        stats = self.get_stats()
+        logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        logger.info("📊 LATENCY SUMMARY (Deepgram + OpenAI + ElevenLabs)")
+        logger.info(f"   Session Duration: {stats['session_duration']:.1f}s")
+        logger.info(f"   Total Responses: {stats['count']}")
+        if stats['count'] > 0:
+            logger.info(f"   Avg TTFB: {stats['avg']:.0f}ms")
+            logger.info(f"   Min TTFB: {stats['min']:.0f}ms")
+            logger.info(f"   Max TTFB: {stats['max']:.0f}ms")
+        logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
 # Core Pipecat imports
 from pipecat.frames.frames import (
@@ -129,6 +176,7 @@ class DailyHealthcareFlowTester:
         self.runner: Optional[PipelineRunner] = None
         self.flow_manager = None
         self.call_logger = None
+        self.latency_tracker = LatencyTracker()  # For comparison with Gemini Live
 
         # Session info will be saved to the main log file created above
         logger.info(f"🎯 Starting Daily test session: {self.session_id} with node: {start_node}")
@@ -381,13 +429,11 @@ class DailyHealthcareFlowTester:
                 elif message.role == "assistant":
                     session_transcript_manager.add_assistant_message(message.content)
 
-                # ALSO add to call_extractor if info agent is active
-                current_agent = self.flow_manager.state.get("current_agent")
-                if current_agent == "info":
-                    call_extractor_instance = self.flow_manager.state.get("call_extractor")
-                    if call_extractor_instance:
-                        call_extractor_instance.add_transcript_entry(message.role, message.content)
-                        logger.debug(f"📊 Added to info agent call_extractor: {message.role}")
+                # ALSO add to call_extractor (ALL calls - for Supabase storage)
+                call_extractor_instance = self.flow_manager.state.get("call_extractor")
+                if call_extractor_instance:
+                    call_extractor_instance.add_transcript_entry(message.role, message.content)
+                    logger.debug(f"📊 Added to call_extractor: {message.role}")
 
             logger.info(f"📊 Transcript now has {len(session_transcript_manager.conversation_log)} messages")
 
@@ -410,6 +456,15 @@ class DailyHealthcareFlowTester:
             logger.info(f"📝 Started transcript recording for session: {self.session_id}")
             logger.info(f"📊 Transcript manager initialized with {len(session_transcript_manager.conversation_log)} messages")
 
+            # Initialize call_extractor for ALL calls (SAME AS BOT.PY - saves to Supabase)
+            from services.call_data_extractor import get_call_extractor
+            call_extractor = get_call_extractor(self.session_id)
+            call_extractor.call_id = self.session_id
+            self.flow_manager.state["call_extractor"] = call_extractor
+            call_extractor.start_call(caller_phone=self.caller_phone or "", interaction_id="")
+            logger.info(f"✅ Call extractor initialized for Supabase storage")
+            logger.info(f"⏱️ Call start time recorded: {call_extractor.started_at}")
+
             # Initialize flow manager (IDENTICAL TO BOT.PY)
             try:
                 await initialize_flow_manager(self.flow_manager, self.start_node)
@@ -430,68 +485,53 @@ class DailyHealthcareFlowTester:
             logger.info(f"🔌 Healthcare Flow Client disconnected: {self.session_id}")
             logger.info(f"👋 Participant left: {participant.get('user_name', 'Unknown')} (Reason: {reason})")
 
+            # Print latency summary for comparison with Gemini Live
+            self.latency_tracker.print_summary()
+
             # Extract and store call data before cleanup
-            # Route to appropriate storage based on which agent handled the call
+            # Save to BOTH Azure AND Supabase for ALL calls
             try:
                 current_agent = self.flow_manager.state.get("current_agent", "unknown")
                 logger.info(f"📊 Extracting call data for session: {self.session_id} | Agent: {current_agent}")
 
-                if current_agent == "info":
-                    # INFO AGENT: Use Supabase storage via call_data_extractor
-                    logger.info("🟠 INFO AGENT call - routing to Supabase storage")
+                # === STEP 1: Save to Supabase (ALL calls) ===
+                logger.info("🔵 Saving to Supabase...")
+                call_extractor = self.flow_manager.state.get("call_extractor")
+                if call_extractor:
+                    # Query LangFuse for token usage before saving
+                    if os.getenv("ENABLE_TRACING", "false").lower() == "true":
+                        logger.info("📊 Querying LangFuse for token usage...")
+                        try:
+                            logger.info("⏳ Waiting 1 second for spans to be queued...")
+                            await asyncio.sleep(1)
+                            logger.info("🔄 Flushing traces to LangFuse...")
+                            flush_traces()
+                            logger.info("⏳ Waiting 5 seconds for LangFuse to index traces...")
+                            await asyncio.sleep(5)
+                            token_data = await get_conversation_tokens(self.session_id)
+                            call_extractor.llm_token_count = token_data["total_tokens"]
+                            logger.success(f"✅ Updated call_extractor with LangFuse tokens: {token_data['total_tokens']}")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to retrieve tokens from LangFuse: {e}")
 
-                    call_extractor = self.flow_manager.state.get("call_extractor")
-                    if call_extractor:
-                        # ✅ Query LangFuse for token usage before saving to Supabase
-                        if os.getenv("ENABLE_TRACING", "false").lower() == "true":
-                            logger.info("📊 Querying LangFuse for token usage...")
-                            try:
-                                # Wait briefly for Pipecat's BatchSpanProcessor to queue final spans
-                                # The conversation tracing just ended, spans need time to be queued
-                                logger.info("⏳ Waiting 1 second for spans to be queued...")
-                                await asyncio.sleep(1)
-
-                                # CRITICAL: Flush traces to LangFuse BEFORE querying
-                                # Otherwise spans are still in BatchSpanProcessor queue
-                                logger.info("🔄 Flushing traces to LangFuse before token query...")
-                                flush_traces()
-
-                                # Wait for LangFuse to index the traces
-                                # Production needs more time due to cloud indexing latency
-                                logger.info("⏳ Waiting 5 seconds for LangFuse to index traces...")
-                                await asyncio.sleep(5)
-
-                                # Get token usage from LangFuse
-                                token_data = await get_conversation_tokens(self.session_id)
-
-                                # Update call_extractor with token data
-                                call_extractor.llm_token_count = token_data["total_tokens"]
-                                logger.success(f"✅ Updated call_extractor with LangFuse tokens: {token_data['total_tokens']}")
-
-                            except Exception as e:
-                                logger.error(f"❌ Failed to retrieve tokens from LangFuse: {e}")
-                                # Continue with save even if LangFuse query fails
-
-                        # ✅ CRITICAL: Mark call end time before saving
-                        call_extractor.end_call()
-                        success = await call_extractor.save_to_database(self.flow_manager.state)
-                        if success:
-                            logger.success(f"✅ Info agent call data saved to Supabase for session: {self.session_id}")
-                        else:
-                            logger.error(f"❌ Failed to save info agent call data to Supabase: {self.session_id}")
+                    # Mark call end time and save to Supabase
+                    call_extractor.end_call()
+                    supabase_success = await call_extractor.save_to_database(self.flow_manager.state)
+                    if supabase_success:
+                        logger.success(f"✅ Call data saved to Supabase for session: {self.session_id}")
                     else:
-                        logger.error("❌ No call_extractor found in flow_manager.state for info agent")
-
+                        logger.error(f"❌ Failed to save call data to Supabase: {self.session_id}")
                 else:
-                    # BOOKING AGENT (or unknown/router): Use Azure Blob Storage via transcript_manager
-                    logger.info(f"🟢 BOOKING AGENT call - routing to Azure Blob Storage")
+                    logger.error("❌ No call_extractor found - Supabase save skipped")
 
-                    session_transcript_manager = get_transcript_manager(self.session_id)
-                    success = await session_transcript_manager.extract_and_store_call_data(self.flow_manager)
-                    if success:
-                        logger.success(f"✅ Booking agent call data saved to Azure for session: {self.session_id}")
-                    else:
-                        logger.error(f"❌ Failed to save booking agent call data to Azure: {self.session_id}")
+                # === STEP 2: Save to Azure Blob Storage (ALL calls) ===
+                logger.info("🟢 Saving to Azure Blob Storage...")
+                session_transcript_manager = get_transcript_manager(self.session_id)
+                azure_success = await session_transcript_manager.extract_and_store_call_data(self.flow_manager)
+                if azure_success:
+                    logger.success(f"✅ Call data saved to Azure for session: {self.session_id}")
+                else:
+                    logger.error(f"❌ Failed to save call data to Azure: {self.session_id}")
 
             except Exception as e:
                 logger.error(f"❌ Error during call data extraction: {e}")

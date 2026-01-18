@@ -1,6 +1,6 @@
 from pipecat.pipeline.task import PipelineTask
 from pipecat.services.openai.llm import OpenAILLMService
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.transports.daily.transport import DailyTransport
 
 from flows.tracked_flow_manager import TrackedFlowManager
@@ -11,7 +11,7 @@ from flows.global_functions import GLOBAL_FUNCTIONS
 def create_flow_manager(
     task: PipelineTask,
     llm: OpenAILLMService,
-    context_aggregator: OpenAILLMContext,
+    context_aggregator: LLMContextAggregatorPair,
     transport: DailyTransport
 ) -> TrackedFlowManager:
     """Create and initialize TrackedFlowManager with global functions.

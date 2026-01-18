@@ -604,10 +604,134 @@ TRANSCRIPT:
                 "patient_intent": "Richiesta assistenza operatore"
             }
 
+    def _extract_booking_data(self, flow_state: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract all booking-related data from flow state.
+        Returns dict with booking fields, using None for missing values.
+        """
+        booking_data = {}
+
+        # Patient details
+        booking_data["patient_first_name"] = flow_state.get("patient_first_name")
+        booking_data["patient_surname"] = flow_state.get("patient_surname")
+        booking_data["patient_dob"] = flow_state.get("patient_dob")
+        booking_data["patient_gender"] = flow_state.get("patient_gender")
+        booking_data["patient_address"] = flow_state.get("patient_address")
+
+        # Selected services (JSONB array)
+        selected_services = flow_state.get("selected_services", [])
+        if selected_services:
+            # Convert service objects to JSON-serializable format
+            services_json = []
+            for svc in selected_services:
+                if hasattr(svc, '__dict__'):
+                    # It's an object, convert to dict
+                    services_json.append({
+                        "uuid": getattr(svc, 'uuid', None),
+                        "name": getattr(svc, 'name', None),
+                        "code": getattr(svc, 'code', None),
+                        "price": getattr(svc, 'price', None),
+                    })
+                elif isinstance(svc, dict):
+                    services_json.append(svc)
+            booking_data["selected_services"] = json.dumps(services_json) if services_json else None
+        else:
+            booking_data["selected_services"] = None
+
+        # Search terms used
+        search_term = flow_state.get("current_search_term")
+        if search_term:
+            booking_data["search_terms_used"] = json.dumps([search_term])
+        else:
+            booking_data["search_terms_used"] = None
+
+        # Selected center
+        selected_center = flow_state.get("selected_center")
+        if selected_center:
+            if hasattr(selected_center, '__dict__'):
+                booking_data["selected_center_uuid"] = getattr(selected_center, 'uuid', None)
+                booking_data["selected_center_name"] = getattr(selected_center, 'name', None)
+                booking_data["selected_center_address"] = getattr(selected_center, 'address', None)
+                booking_data["selected_center_city"] = getattr(selected_center, 'city', None)
+            elif isinstance(selected_center, dict):
+                booking_data["selected_center_uuid"] = selected_center.get('uuid')
+                booking_data["selected_center_name"] = selected_center.get('name')
+                booking_data["selected_center_address"] = selected_center.get('address')
+                booking_data["selected_center_city"] = selected_center.get('city')
+        else:
+            booking_data["selected_center_uuid"] = None
+            booking_data["selected_center_name"] = None
+            booking_data["selected_center_address"] = None
+            booking_data["selected_center_city"] = None
+
+        # Booked slots (JSONB array)
+        booked_slots = flow_state.get("booked_slots", [])
+        if booked_slots:
+            booking_data["booked_slots"] = json.dumps(booked_slots)
+            # Extract appointment datetime from first slot and convert to datetime object
+            first_slot = booked_slots[0] if booked_slots else {}
+            start_time_str = first_slot.get("start_time")
+            if start_time_str:
+                try:
+                    # Parse ISO format string to datetime object (required by asyncpg)
+                    from datetime import datetime as dt
+                    booking_data["appointment_datetime"] = dt.fromisoformat(start_time_str)
+                except (ValueError, AttributeError) as e:
+                    logger.warning(f"⚠️ Could not parse appointment datetime: {start_time_str} - {e}")
+                    booking_data["appointment_datetime"] = None
+            else:
+                booking_data["appointment_datetime"] = None
+        else:
+            booking_data["booked_slots"] = None
+            booking_data["appointment_datetime"] = None
+
+        # Date/time preferences
+        booking_data["preferred_date"] = flow_state.get("preferred_date")
+        booking_data["preferred_time"] = flow_state.get("preferred_time")
+
+        # Booking result
+        final_booking = flow_state.get("final_booking", {})
+        if final_booking:
+            booking_data["booking_code"] = final_booking.get("code") or final_booking.get("booking_code")
+        else:
+            booking_data["booking_code"] = None
+
+        # Calculate total booking cost from booked slots
+        total_cost = 0
+        if booked_slots:
+            for slot in booked_slots:
+                slot_price = slot.get("price") or slot.get("slot_price") or 0
+                if isinstance(slot_price, (int, float)):
+                    total_cost += slot_price
+        booking_data["total_booking_cost"] = total_cost if total_cost > 0 else None
+
+        # Cerba membership and authorizations
+        booking_data["is_cerba_member"] = flow_state.get("is_cerba_member", False)
+        booking_data["reminder_authorization"] = flow_state.get("reminder_authorization", False)
+        booking_data["marketing_authorization"] = flow_state.get("marketing_authorization", False)
+
+        # Transfer info
+        booking_data["transfer_reason"] = flow_state.get("transfer_reason")
+        transfer_ts = flow_state.get("transfer_timestamp")
+        if transfer_ts:
+            try:
+                # Convert to datetime if it's a string timestamp
+                if isinstance(transfer_ts, str):
+                    booking_data["transfer_timestamp"] = datetime.fromisoformat(transfer_ts) if 'T' in transfer_ts else None
+                else:
+                    booking_data["transfer_timestamp"] = None
+            except:
+                booking_data["transfer_timestamp"] = None
+        else:
+            booking_data["transfer_timestamp"] = None
+
+        return booking_data
+
     async def save_to_database(self, flow_state: Dict[str, Any]) -> bool:
         """
         Extract all data and UPDATE tb_stat table row (bridge already created it)
         Uses LLM analysis for intelligent field extraction
+        Now includes ALL booking data fields for unified storage
 
         Args:
             flow_state: Flow manager state containing call information
@@ -625,7 +749,7 @@ TRANSCRIPT:
             transcript_text = self._generate_transcript_text()
 
             # Get phone number
-            phone_number = flow_state.get("caller_phone") or self.caller_phone
+            phone_number = flow_state.get("caller_phone") or flow_state.get("caller_phone_from_talkdesk") or self.caller_phone
 
             # Check if we have pre-computed transfer analysis
             if flow_state.get("transfer_requested") and flow_state.get("transfer_analysis"):
@@ -669,6 +793,9 @@ TRANSCRIPT:
             # ✅ Calculate cost AFTER we have final duration_seconds (from transfer_data or normal calculation)
             cost = self._calculate_cost(duration_seconds)
 
+            # ✅ Extract all booking data from flow state
+            booking_data = self._extract_booking_data(flow_state)
+
             logger.info(f"📊 Call Data Summary:")
             logger.info(f"   Call ID: {self.call_id}")
             logger.info(f"   Duration: {duration_seconds:.2f}s" if duration_seconds else "   Duration: N/A")
@@ -681,12 +808,20 @@ TRANSCRIPT:
             logger.info(f"   Phone: {phone_number or 'N/A'}")
             logger.info(f"   LLM Tokens: {self.llm_token_count}")
 
+            # Log booking data if present
+            if booking_data.get("booking_code"):
+                logger.info(f"   📅 Booking Code: {booking_data['booking_code']}")
+            if booking_data.get("selected_center_name"):
+                logger.info(f"   🏥 Center: {booking_data['selected_center_name']}")
+            if booking_data.get("patient_first_name"):
+                logger.info(f"   👤 Patient: {booking_data['patient_first_name']} {booking_data.get('patient_surname', '')}")
+
             # Prepare data for database/backup
             call_data = {
                 "call_id": self.call_id,
                 "phone_number": phone_number,
                 "assistant_id": self.assistant_id,
-                "region": self.region,  # ✅ ADD region
+                "region": self.region,
                 "started_at": self.started_at.isoformat() if self.started_at else None,
                 "ended_at": self.ended_at.isoformat() if self.ended_at else None,
                 "duration_seconds": duration_seconds,
@@ -700,10 +835,11 @@ TRANSCRIPT:
                 "cost": cost,
                 "llm_token": self.llm_token_count,
                 "service": service,
-                "interaction_id": self.interaction_id
+                "interaction_id": self.interaction_id,
+                **booking_data  # Include all booking fields
             }
 
-            # UPDATE database row (bridge already created it with call_id)
+            # UPDATE database row with ALL fields (original + booking)
             query = """
             UPDATE tb_stat SET
                 phone_number = $2,
@@ -722,6 +858,28 @@ TRANSCRIPT:
                 cost = $15,
                 llm_token = $16,
                 service = $17,
+                patient_first_name = $18,
+                patient_surname = $19,
+                patient_dob = $20,
+                patient_gender = $21,
+                patient_address = $22,
+                selected_services = $23,
+                search_terms_used = $24,
+                selected_center_uuid = $25,
+                selected_center_name = $26,
+                selected_center_address = $27,
+                selected_center_city = $28,
+                booked_slots = $29,
+                preferred_date = $30,
+                preferred_time = $31,
+                appointment_datetime = $32,
+                booking_code = $33,
+                total_booking_cost = $34,
+                is_cerba_member = $35,
+                reminder_authorization = $36,
+                marketing_authorization = $37,
+                transfer_reason = $38,
+                transfer_timestamp = $39,
                 updated_at = CURRENT_TIMESTAMP
             WHERE call_id = $1
             """
@@ -731,7 +889,7 @@ TRANSCRIPT:
                 self.call_id,
                 phone_number,
                 self.assistant_id,
-                self.region,  # ✅ ADD region parameter
+                self.region,
                 self.started_at,
                 self.ended_at,
                 duration_seconds,
@@ -744,10 +902,33 @@ TRANSCRIPT:
                 summary,
                 cost,
                 self.llm_token_count,
-                service
+                service,
+                # Booking fields
+                booking_data["patient_first_name"],
+                booking_data["patient_surname"],
+                booking_data["patient_dob"],
+                booking_data["patient_gender"],
+                booking_data["patient_address"],
+                booking_data["selected_services"],
+                booking_data["search_terms_used"],
+                booking_data["selected_center_uuid"],
+                booking_data["selected_center_name"],
+                booking_data["selected_center_address"],
+                booking_data["selected_center_city"],
+                booking_data["booked_slots"],
+                booking_data["preferred_date"],
+                booking_data["preferred_time"],
+                booking_data["appointment_datetime"],
+                booking_data["booking_code"],
+                booking_data["total_booking_cost"],
+                booking_data["is_cerba_member"],
+                booking_data["reminder_authorization"],
+                booking_data["marketing_authorization"],
+                booking_data["transfer_reason"],
+                booking_data["transfer_timestamp"]
             )
 
-            logger.success(f"✅ Call data updated in tb_stat table")
+            logger.success(f"✅ Call data updated in tb_stat table (with booking fields)")
             logger.info(f"   Database Call ID: {self.call_id}")
             logger.info(f"   Rows updated: {result}")
 

@@ -482,13 +482,40 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
             flow_manager.state["time_preference"] = "any time"
             logger.info(f"🎯 FIRST AVAILABLE MODE ACTIVATED - searching from TOMORROW: {preferred_date}")
 
-            from flows.nodes.booking import create_slot_search_node
+            # Get required data for slot search
+            selected_services = flow_manager.state.get("selected_services", [])
+            selected_center = flow_manager.state.get("selected_center")
+            patient_gender = flow_manager.state.get("patient_gender", 'm')
+            patient_dob = flow_manager.state.get("patient_dob", '1980-04-13')
+            current_service_index = flow_manager.state.get("current_service_index", 0)
+            current_service = selected_services[current_service_index] if selected_services else None
+            service_name = current_service.name if current_service else "il servizio"
+
+            # CRITICAL: Set pending_slot_search_params for perform_slot_search_and_transition
+            flow_manager.state["pending_slot_search_params"] = {
+                "selected_center": selected_center,
+                "selected_services": selected_services,
+                "preferred_date": preferred_date,
+                "start_time": None,
+                "end_time": None,
+                "time_preference": "any time",
+                "patient_gender": patient_gender,
+                "patient_dob": patient_dob,
+                "current_service_index": current_service_index,
+                "current_service": current_service
+            }
+            logger.info(f"✅ Set pending_slot_search_params for first available mode")
+
+            from flows.nodes.booking import create_slot_search_processing_node
             return {
                 "success": True,
                 "preferred_date": preferred_date,
                 "time_preference": "first available",
                 "first_available_mode": True
-            }, create_slot_search_node()
+            }, create_slot_search_processing_node(
+                service_name=service_name,
+                tts_message=f"Cerco subito la prima disponibilità per {service_name}. Attendi un momento."
+            )
 
         # Parse and validate date (for normal date selection, not first available)
         date_obj = datetime.strptime(preferred_date, "%Y-%m-%d")
@@ -542,14 +569,42 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
             flow_manager.state["end_time"] = None
             flow_manager.state["time_preference"] = "any time"
             logger.info(f"📅 Date collected: {preferred_date} - No time preference")
-        
-        from flows.nodes.booking import create_slot_search_node
+
+        # Get required data for slot search
+        selected_services = flow_manager.state.get("selected_services", [])
+        selected_center = flow_manager.state.get("selected_center")
+        patient_gender = flow_manager.state.get("patient_gender", 'm')
+        patient_dob = flow_manager.state.get("patient_dob", '1980-04-13')
+        current_service_index = flow_manager.state.get("current_service_index", 0)
+        current_service = selected_services[current_service_index] if selected_services else None
+        service_name = current_service.name if current_service else "il servizio"
+        time_pref = flow_manager.state.get("time_preference", "any time")
+
+        # CRITICAL: Set pending_slot_search_params for perform_slot_search_and_transition
+        flow_manager.state["pending_slot_search_params"] = {
+            "selected_center": selected_center,
+            "selected_services": selected_services,
+            "preferred_date": preferred_date,
+            "start_time": flow_manager.state.get("start_time"),
+            "end_time": flow_manager.state.get("end_time"),
+            "time_preference": time_pref,
+            "patient_gender": patient_gender,
+            "patient_dob": patient_dob,
+            "current_service_index": current_service_index,
+            "current_service": current_service
+        }
+        logger.info(f"✅ Set pending_slot_search_params for date: {preferred_date}, time_pref: {time_pref}")
+
+        from flows.nodes.booking import create_slot_search_processing_node
         return {
             "success": True,
             "preferred_date": preferred_date,
-            "time_preference": flow_manager.state.get("time_preference", "any time")
-        }, create_slot_search_node()
-        
+            "time_preference": time_pref
+        }, create_slot_search_processing_node(
+            service_name=service_name,
+            tts_message=f"Cerco gli appuntamenti disponibili per {service_name}. Attendi un momento."
+        )
+
     except (ValueError, TypeError) as e:
         logger.error(f"Date/time parsing error: {e}")
         return {"success": False, "message": "Invalid date format. Please use a valid date like 'November 21' or '2025-11-21'"}, None

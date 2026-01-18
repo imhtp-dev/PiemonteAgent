@@ -315,13 +315,15 @@ def create_no_centers_node(address: str, service_name: str) -> NodeConfig:
 
 def create_cerba_membership_node() -> NodeConfig:
     """Create Cerba membership check node"""
-    from pipecat_flows import ContextStrategyConfig, ContextStrategy
-
     return NodeConfig(
         name="cerba_membership_check",
         role_messages=[{
             "role": "system",
-            "content": f"Ask the patient if he or she is a Cerba member to calculate prices. {settings.language_config}"
+            "content": f"""Ask if patient has a Cerba Card for pricing discount.
+
+CRITICAL: When user responds YES or NO, you MUST call check_cerba_membership function with is_cerba_member=true or is_cerba_member=false.
+
+Do NOT say "finalizing booking" or proceed without calling the function. {settings.language_config}"""
         }],
         task_messages=[{
             "role": "system",
@@ -331,7 +333,7 @@ def create_cerba_membership_node() -> NodeConfig:
             FlowsFunctionSchema(
                 name="check_cerba_membership",
                 handler=check_cerba_membership_and_transition,
-                description="Check if user is a Cerba member",
+                description="REQUIRED: Call this when user answers about Cerba membership. Pass is_cerba_member=true if they have a card, false if not. This is needed to proceed to appointment booking.",
                 properties={
                     "is_cerba_member": {
                         "type": "boolean",
