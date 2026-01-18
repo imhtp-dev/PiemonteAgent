@@ -57,8 +57,8 @@ from opentelemetry.trace import Status, StatusCode
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer, VADParams
 
-# Serializer imports 
-from pipecat.serializers.base_serializer import FrameSerializer, FrameSerializerType
+# Serializer imports
+from pipecat.serializers.base_serializer import FrameSerializer
 
 # Import flow management
 from flows.manager import create_flow_manager, initialize_flow_manager
@@ -80,7 +80,7 @@ class RawPCMSerializer(FrameSerializer):
 
     @property
     def type(self):
-        return FrameSerializerType.BINARY
+        return "binary"
 
     async def serialize(self, frame: Frame) -> bytes:
         """Serialize outgoing audio frames"""
