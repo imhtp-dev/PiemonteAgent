@@ -28,6 +28,10 @@ VALID_MOTIVAZIONE = {
 
 ALL_MOTIVAZIONI = [m for motiv_list in VALID_MOTIVAZIONE.values() for m in motiv_list]
 
+# Pricing constants per minute (EUR)
+PRICE_PER_MINUTE_INFO = 0.006      # €0.006/min for info calls
+PRICE_PER_MINUTE_BOOKING = 0.44   # €0.44/min for booking calls (including incomplete)
+
 
 def validate_and_fix_llm_output(analysis: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -168,11 +172,26 @@ class CallDataExtractor:
             return delta.total_seconds()
         return None
     
-    def _calculate_cost(self, duration_seconds: Optional[float]) -> Optional[float]:
-        """Calculate call cost (seconds × 0.006)"""
-        if duration_seconds:
-            return round(duration_seconds * 0.006, 4)
-        return None
+    def _calculate_cost(self, duration_seconds: Optional[float], call_type: str = "info") -> Optional[float]:
+        """Calculate call cost based on call type (minutes × rate)"""
+        if not duration_seconds:
+            return None
+        duration_minutes = duration_seconds / 60
+        rate = PRICE_PER_MINUTE_BOOKING if call_type in ["booking", "booking_incomplete"] else PRICE_PER_MINUTE_INFO
+        return round(duration_minutes * rate, 4)
+
+    def _determine_call_type(self, flow_state: Dict[str, Any], booking_data: Dict[str, Any]) -> str:
+        """
+        Determine if call is booking or info type.
+        - booking: Completed booking (has booking_code)
+        - booking_incomplete: Started booking but didn't complete (has selected_services)
+        - info: Information/question call only
+        """
+        if booking_data.get("booking_code"):
+            return "booking"
+        if flow_state.get("selected_services"):
+            return "booking_incomplete"
+        return "info"
     
     def _determine_action(self, flow_state: Dict[str, Any]) -> str:
         """
@@ -790,16 +809,20 @@ TRANSCRIPT:
                 patient_intent = analysis.get("patient_intent", "Richiesta informazioni")
                 summary = analysis.get("summary", "")[:250]  # Limit to 250 chars
 
-            # ✅ Calculate cost AFTER we have final duration_seconds (from transfer_data or normal calculation)
-            cost = self._calculate_cost(duration_seconds)
-
-            # ✅ Extract all booking data from flow state
+            # ✅ Extract all booking data from flow state FIRST (needed for call_type)
             booking_data = self._extract_booking_data(flow_state)
+
+            # ✅ Determine call type (booking, booking_incomplete, or info)
+            call_type = self._determine_call_type(flow_state, booking_data)
+
+            # ✅ Calculate cost based on call type (different rates for booking vs info)
+            cost = self._calculate_cost(duration_seconds, call_type)
 
             logger.info(f"📊 Call Data Summary:")
             logger.info(f"   Call ID: {self.call_id}")
+            logger.info(f"   Call Type: {call_type}")
             logger.info(f"   Duration: {duration_seconds:.2f}s" if duration_seconds else "   Duration: N/A")
-            logger.info(f"   Cost: ${cost:.4f}" if cost else "   Cost: N/A")
+            logger.info(f"   Cost: €{cost:.4f}" if cost else "   Cost: N/A")
             logger.info(f"   Action: {action}")
             logger.info(f"   Sentiment: {sentiment}")
             logger.info(f"   Service: {service}")
@@ -836,10 +859,11 @@ TRANSCRIPT:
                 "llm_token": self.llm_token_count,
                 "service": service,
                 "interaction_id": self.interaction_id,
+                "call_type": call_type,  # booking, booking_incomplete, or info
                 **booking_data  # Include all booking fields
             }
 
-            # UPDATE database row with ALL fields (original + booking)
+            # UPDATE database row with ALL fields (original + booking + call_type)
             query = """
             UPDATE tb_stat SET
                 phone_number = $2,
@@ -858,28 +882,29 @@ TRANSCRIPT:
                 cost = $15,
                 llm_token = $16,
                 service = $17,
-                patient_first_name = $18,
-                patient_surname = $19,
-                patient_dob = $20,
-                patient_gender = $21,
-                patient_address = $22,
-                selected_services = $23,
-                search_terms_used = $24,
-                selected_center_uuid = $25,
-                selected_center_name = $26,
-                selected_center_address = $27,
-                selected_center_city = $28,
-                booked_slots = $29,
-                preferred_date = $30,
-                preferred_time = $31,
-                appointment_datetime = $32,
-                booking_code = $33,
-                total_booking_cost = $34,
-                is_cerba_member = $35,
-                reminder_authorization = $36,
-                marketing_authorization = $37,
-                transfer_reason = $38,
-                transfer_timestamp = $39,
+                call_type = $18,
+                patient_first_name = $19,
+                patient_surname = $20,
+                patient_dob = $21,
+                patient_gender = $22,
+                patient_address = $23,
+                selected_services = $24,
+                search_terms_used = $25,
+                selected_center_uuid = $26,
+                selected_center_name = $27,
+                selected_center_address = $28,
+                selected_center_city = $29,
+                booked_slots = $30,
+                preferred_date = $31,
+                preferred_time = $32,
+                appointment_datetime = $33,
+                booking_code = $34,
+                total_booking_cost = $35,
+                is_cerba_member = $36,
+                reminder_authorization = $37,
+                marketing_authorization = $38,
+                transfer_reason = $39,
+                transfer_timestamp = $40,
                 updated_at = CURRENT_TIMESTAMP
             WHERE call_id = $1
             """
@@ -903,6 +928,7 @@ TRANSCRIPT:
                 cost,
                 self.llm_token_count,
                 service,
+                call_type,  # $18 - booking, booking_incomplete, or info
                 # Booking fields
                 booking_data["patient_first_name"],
                 booking_data["patient_surname"],
