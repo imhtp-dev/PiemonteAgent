@@ -34,6 +34,25 @@ class AzureSTTServiceWithPhrases(AzureSTTService):
         self._phrase_list = phrase_list or []
         self._phrase_list_weight = phrase_list_weight
         self._phrase_list_grammar = None
+        self._audio_chunks_received = 0
+
+    def _on_handle_recognized(self, event):
+        """Override to add debug logging"""
+        logger.info(f"🎤 Azure RECOGNIZED event: reason={event.result.reason}, text='{event.result.text}'")
+        super()._on_handle_recognized(event)
+
+    def _on_handle_recognizing(self, event):
+        """Override to add debug logging"""
+        logger.debug(f"🎤 Azure RECOGNIZING event: text='{event.result.text}'")
+        super()._on_handle_recognizing(event)
+
+    async def run_stt(self, audio: bytes):
+        """Override to track audio chunks"""
+        self._audio_chunks_received += 1
+        if self._audio_chunks_received % 100 == 0:
+            logger.debug(f"🔊 Azure STT received {self._audio_chunks_received} audio chunks")
+        async for frame in super().run_stt(audio):
+            yield frame
 
     def _setup_phrase_list(self, recognizer):
         """Setup phrase list grammar for the recognizer"""

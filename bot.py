@@ -154,7 +154,7 @@ async def report_to_talkdesk(flow_manager, call_extractor):
         logger.info(f"   Summary: {call_data['summary'][:100]}...")
 
         # Send to Talkdesk
-        from talkdesk_hangup import send_to_talkdesk
+        from services.talkdesk_service import send_to_talkdesk
         success = send_to_talkdesk(call_data)
 
         if success:

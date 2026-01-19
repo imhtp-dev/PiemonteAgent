@@ -431,11 +431,11 @@ async def check_cerba_membership_and_transition(args: FlowArgs, flow_manager: Fl
         if booking_scenario == "separate":
             # For separate appointments, get the first group's services
             first_group_services = service_groups[0]["services"]
-            first_service_name = " + ".join([svc.name for svc in first_group_services])
+            first_service_name = " più ".join([svc.name for svc in first_group_services])
         elif booking_scenario in ["bundle", "combined"]:
             # For bundle/combined, get all services in the first (and only) group
             first_group_services = service_groups[0]["services"]
-            first_service_name = " + ".join([svc.name for svc in first_group_services])
+            first_service_name = " più ".join([svc.name for svc in first_group_services])
     elif "selected_services" in flow_manager.state and flow_manager.state["selected_services"]:
         # Legacy fallback
         first_service = flow_manager.state["selected_services"][0]
@@ -480,6 +480,7 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
             flow_manager.state["start_time"] = None
             flow_manager.state["end_time"] = None
             flow_manager.state["time_preference"] = "any time"
+            flow_manager.state["preferred_time"] = "first available"
             logger.info(f"🎯 FIRST AVAILABLE MODE ACTIVATED - searching from TOMORROW: {preferred_date}")
 
             # Get required data for slot search
@@ -533,12 +534,14 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
             flow_manager.state["start_time"] = f"{preferred_date} 08:00:00+00"
             flow_manager.state["end_time"] = f"{preferred_date} 12:00:00+00"
             flow_manager.state["time_preference"] = "morning (08:00-12:00)"
+            flow_manager.state["preferred_time"] = "morning"
             logger.info(f"📅 Date/Time collected: {preferred_date} - Morning (08:00-12:00)")
         elif time_preference == "afternoon" or "afternoon" in preferred_time.lower():
             # 12:00-19:00 time range (database format)
             flow_manager.state["start_time"] = f"{preferred_date} 12:00:00+00"
             flow_manager.state["end_time"] = f"{preferred_date} 19:00:00+00"
             flow_manager.state["time_preference"] = "afternoon (12:00-19:00)"
+            flow_manager.state["preferred_time"] = "afternoon"
             logger.info(f"📅 Date/Time collected: {preferred_date} - Afternoon (12:00-19:00)")
         elif preferred_time and time_preference == "specific":
             # Parse specific time
@@ -568,6 +571,7 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
             flow_manager.state["start_time"] = None
             flow_manager.state["end_time"] = None
             flow_manager.state["time_preference"] = "any time"
+            flow_manager.state["preferred_time"] = "any"
             logger.info(f"📅 Date collected: {preferred_date} - No time preference")
 
         # Get required data for slot search
@@ -685,7 +689,7 @@ async def update_date_and_search_slots(args: FlowArgs, flow_manager: FlowManager
             current_group = service_groups[current_group_index]
             current_group_services = current_group["services"]
             uuid_exam = [svc.uuid for svc in current_group_services]
-            current_service_name = " + ".join([svc.name for svc in current_group_services])
+            current_service_name = " più ".join([svc.name for svc in current_group_services])
             logger.info(f"🔍 DATE UPDATE: Using service group {current_group_index} - {current_service_name}")
         else:
             # Fallback to legacy single-service logic
@@ -876,7 +880,7 @@ async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowM
 
             all_services = service_groups[0]["services"]
             uuid_exam = [svc.uuid for svc in all_services]
-            current_service_name = " + ".join([svc.name for svc in all_services])
+            current_service_name = " più ".join([svc.name for svc in all_services])
 
             logger.info(f"   Services in bundle: {len(all_services)}")
             for idx, svc in enumerate(all_services):
@@ -914,7 +918,7 @@ async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowM
             current_group = service_groups[current_group_index]
             current_group_services = current_group["services"]
             uuid_exam = [svc.uuid for svc in current_group_services]
-            current_service_name = " + ".join([svc.name for svc in current_group_services])
+            current_service_name = " più ".join([svc.name for svc in current_group_services])
 
             logger.info(f"   Services in current group: {len(current_group_services)}")
             for idx, svc in enumerate(current_group_services):
@@ -1553,7 +1557,7 @@ async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: Flow
 
                 next_group = service_groups[next_group_index]
                 next_group_services = next_group["services"]
-                next_group_service_names = " + ".join([svc.name for svc in next_group_services])
+                next_group_service_names = " più ".join([svc.name for svc in next_group_services])
 
                 total_groups = len(service_groups)
                 progress_text = f"Appointment {next_group_index + 1} of {total_groups}"
@@ -2031,7 +2035,7 @@ async def search_different_date_handler(args: FlowArgs, flow_manager: FlowManage
             current_group = service_groups[current_group_index]
             current_group_services = current_group["services"]
             uuid_exam = [svc.uuid for svc in current_group_services]
-            current_service_name = " + ".join([svc.name for svc in current_group_services])
+            current_service_name = " più ".join([svc.name for svc in current_group_services])
             # Use first service from group as display service
             current_service = current_group_services[0]
             logger.info(f"🔍 DIFFERENT DATE: Using service group {current_group_index} - {current_service_name}")

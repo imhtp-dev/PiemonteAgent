@@ -34,7 +34,7 @@ class Settings:
             "api_key": self.api_keys["deepgram"],
             "sample_rate": 16000,
             "model": "nova-3-general",  # Upgraded to Nova-3 for 53.4% better accuracy
-            "language": "it",
+            "language": "en",
             "encoding": "linear16",
             "channels": 1,
             "interim_results": True,
