@@ -9,6 +9,7 @@ by phone number and verify their date of birth.
 import re
 from typing import Dict, Any, Optional, List
 from loguru import logger
+from utils.tracing import trace_sync_call, add_span_attributes
 
 
 def normalize_phone(raw: str) -> Optional[str]:
@@ -83,6 +84,7 @@ def get_patient_id_for_logging(patient: Dict[str, Any]) -> str:
     return patient.get('id', 'unknown')
 
 
+@trace_sync_call("api.patient_lookup", add_args=False)  # Don't trace args (contains PII)
 def lookup_by_phone_and_dob(phone: str, dob: str) -> Optional[Dict[str, Any]]:
     """
     Find patient record by phone number and date of birth using Cerba API
@@ -94,6 +96,11 @@ def lookup_by_phone_and_dob(phone: str, dob: str) -> Optional[Dict[str, Any]]:
     Returns:
         Matching patient record or None if not found
     """
+    # Add non-PII info to span
+    add_span_attributes({
+        "patient_lookup.has_phone": bool(phone),
+        "patient_lookup.has_dob": bool(dob)
+    })
     normalized_phone = normalize_phone(phone)
     normalized_dob = normalize_dob(dob)
 

@@ -355,8 +355,8 @@ Analyze the transcript and classify the call.
 ### ESITO_CHIAMATA + MOTIVAZIONE (STRICT - use ONLY these combinations):
 
 **COMPLETATA** (call completed successfully):
-- "Info fornite" → L'AI ha risposto con successo alla richiesta del paziente
-- "Pren. effettuata" → L'AI ha gestito e prenotato il paziente in autonomia (prossimo sviluppo)
+- "Info fornite" → L'AI ha risposto con successo alla richiesta del paziente (info/domande)
+- "Pren. effettuata" → L'AI ha completato una prenotazione per il paziente (booking confermato)
 
 **TRASFERITA** (call transferred to human operator):
 - "Mancata comprensione" → AI non comprende o non è certa di aver compreso la domanda del paziente
@@ -814,6 +814,12 @@ TRANSCRIPT:
 
             # ✅ Determine call type (booking, booking_incomplete, or info)
             call_type = self._determine_call_type(flow_state, booking_data)
+
+            # ✅ Override esito/motivazione when booking is completed (more reliable than LLM)
+            if call_type == "booking":
+                esito_chiamata = "COMPLETATA"
+                motivazione = "Pren. effettuata"
+                logger.info(f"📅 Booking completed - overriding: esito=COMPLETATA, motivazione=Pren. effettuata")
 
             # ✅ Calculate cost based on call type (different rates for booking vs info)
             cost = self._calculate_cost(duration_seconds, call_type)

@@ -29,6 +29,30 @@ except ImportError:
 # Global storage for mapping conversation_id -> OpenTelemetry trace_id
 _conversation_trace_map: Dict[str, str] = {}
 
+# Track if patch has been applied (prevent double-patching)
+_trace_patch_applied = False
+
+
+def patch_trace_input_output():
+    """
+    DISABLED: Pipecat's internal tracing API is unstable.
+
+    Instead, we use update_trace_io() to update traces via LangFuse SDK
+    after the call ends. This is more reliable and doesn't depend on
+    Pipecat's internal implementation.
+
+    The update_trace_io() function is called in bot.py and voice_test.py
+    after token retrieval, using the transcript to get input/output.
+    """
+    global _trace_patch_applied
+
+    if _trace_patch_applied:
+        return
+
+    # Mark as "applied" but don't actually patch - we use SDK approach instead
+    _trace_patch_applied = True
+    logger.info("📝 Trace I/O will be updated via LangFuse SDK after call ends")
+
 
 def setup_tracing(
     service_name: str = "pipecat-healthcare-agent",
@@ -53,6 +77,9 @@ def setup_tracing(
         return None
 
     try:
+        # Apply trace I/O patch BEFORE Pipecat setup (critical for LangFuse visibility)
+        patch_trace_input_output()
+
         otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
         if not otlp_endpoint:
             logger.error("❌ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT not set")
@@ -207,11 +234,18 @@ def cleanup_conversation_trace(conversation_id: str) -> None:
 
 
 def get_langfuse_client() -> Langfuse:
-    """Get initialized LangFuse client for API queries"""
+    """Get initialized LangFuse client for API queries with extended timeout"""
+    import httpx
+
+    # Create httpx client with extended timeout (default 5s is too short for cloud API)
+    timeout = float(os.getenv("LANGFUSE_TIMEOUT", "30"))  # 30 seconds default
+    httpx_client = httpx.Client(timeout=timeout)
+
     return Langfuse(
         public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
         secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
-        host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+        host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+        httpx_client=httpx_client
     )
 
 
@@ -347,6 +381,10 @@ def _extract_tokens_from_trace(trace_data) -> dict:
             input_tokens = 0
             output_tokens = 0
 
+            # Debug: Log observation attributes to help diagnose token extraction
+            logger.debug(f"📊 GENERATION observation: model={getattr(observation, 'model', 'unknown')}")
+            logger.debug(f"📊 Has usageDetails: {hasattr(observation, 'usageDetails')}, Has inputUsage: {hasattr(observation, 'inputUsage')}")
+
             # Strategy 1: Direct attributes
             if hasattr(observation, 'promptTokens') and observation.promptTokens:
                 input_tokens = observation.promptTokens
@@ -361,6 +399,21 @@ def _extract_tokens_from_trace(trace_data) -> dict:
                         input_tokens = usage.get("input", 0) or usage.get("promptTokens", 0) or usage.get("input_tokens", 0) or 0
                     if output_tokens == 0:
                         output_tokens = usage.get("output", 0) or usage.get("completionTokens", 0) or usage.get("output_tokens", 0) or 0
+
+            # Strategy 3: usageDetails object (OTLP traces use this format)
+            if input_tokens == 0 or output_tokens == 0:
+                usage_details = getattr(observation, 'usageDetails', None) or getattr(observation, 'usage_details', None)
+                if usage_details and isinstance(usage_details, dict):
+                    if input_tokens == 0:
+                        input_tokens = usage_details.get("input", 0) or usage_details.get("prompt_tokens", 0) or 0
+                    if output_tokens == 0:
+                        output_tokens = usage_details.get("output", 0) or usage_details.get("completion_tokens", 0) or 0
+
+            # Strategy 4: Direct inputUsage/outputUsage attributes (seen in trace JSON)
+            if input_tokens == 0:
+                input_tokens = getattr(observation, 'inputUsage', 0) or 0
+            if output_tokens == 0:
+                output_tokens = getattr(observation, 'outputUsage', 0) or 0
 
             prompt_tokens += input_tokens
             completion_tokens += output_tokens
@@ -473,3 +526,125 @@ def _get_tokens_sync(trace_id: str) -> dict:
             "completion_tokens": 0,
             "total_tokens": 0
         }
+
+
+async def update_trace_io(
+    session_id: str,
+    input_text: str,
+    output_text: str,
+    call_type: str = "call",
+    caller_phone: str = None
+) -> bool:
+    """
+    Update a LangFuse trace with input/output and meaningful name.
+
+    This is a reliable way to add Input/Output to traces AFTER the call ends,
+    using the transcript data that was collected during the conversation.
+
+    Also sets a meaningful trace name for easy identification in LangFuse:
+    Format: "{call_type} | {session_id[:8]} | {phone_last4}"
+
+    Args:
+        session_id: The session/conversation ID (used as langfuse.session.id)
+        input_text: First user message (shown in LangFuse Input field)
+        output_text: Last assistant response (shown in LangFuse Output field)
+        call_type: Type of call - "booking", "info", "transfer" (for trace name)
+        caller_phone: Caller phone number (last 4 digits shown in trace name)
+
+    Returns:
+        True if update successful, False otherwise
+    """
+    try:
+        if not session_id:
+            logger.warning("⚠️ No session_id provided for trace I/O update")
+            return False
+
+        logger.info(f"📝 Updating trace I/O for session: {session_id}")
+
+        # Run synchronous update in thread pool
+        loop = asyncio.get_event_loop()
+        success = await loop.run_in_executor(
+            None,
+            _update_trace_io_sync,
+            session_id,
+            input_text,
+            output_text,
+            call_type,
+            caller_phone
+        )
+
+        return success
+
+    except Exception as e:
+        logger.error(f"❌ Failed to update trace I/O: {e}")
+        return False
+
+
+def _update_trace_io_sync(
+    session_id: str,
+    input_text: str,
+    output_text: str,
+    call_type: str = "call",
+    caller_phone: str = None
+) -> bool:
+    """
+    Update trace I/O and name via LangFuse Ingestion API (upsert).
+
+    LangFuse V3 API has no PATCH endpoint for traces. Instead, we use the
+    ingestion batch API to "upsert" the trace with new data.
+
+    Sets trace name format: "{call_type} | {session_id[:8]} | {phone_last4}"
+    Example: "booking | abc12345 | *7890"
+    """
+    try:
+        from langfuse.api.resources.ingestion.types import TraceBody, IngestionEvent_TraceCreate
+        from datetime import datetime, timezone
+        import uuid
+
+        client = get_langfuse_client()
+
+        # Find trace by session_id to get its ID
+        traces_response = client.api.trace.list(
+            session_id=session_id,
+            limit=1
+        )
+
+        if not traces_response or not hasattr(traces_response, 'data') or not traces_response.data:
+            logger.warning(f"⚠️ No traces found for session_id: {session_id}")
+            return False
+
+        trace_id = traces_response.data[0].id
+        logger.info(f"📊 Found trace {trace_id} for session {session_id}")
+
+        # Build meaningful trace name
+        phone_suffix = f"*{caller_phone[-4:]}" if caller_phone and len(caller_phone) >= 4 else "unknown"
+        trace_name = f"{call_type} | {session_id[:8]} | {phone_suffix}"
+
+        # Build TraceBody for upsert (only include fields we want to update)
+        body = TraceBody(
+            id=trace_id,
+            name=trace_name,
+            input=input_text[:1000] if input_text else None,
+            output=output_text[:1000] if output_text else None
+        )
+
+        # Create ingestion event
+        event_id = str(uuid.uuid4())
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:23] + "Z"
+        event = IngestionEvent_TraceCreate(id=event_id, timestamp=timestamp, body=body)
+
+        # Send via ingestion batch API (upserts the trace)
+        response = client.api.ingestion.batch(batch=[event])
+        logger.info(f"📤 Ingestion response: {response}")
+
+        logger.success(f"✅ Updated trace {trace_id}: name='{trace_name}'")
+        logger.debug(f"   Input: {input_text[:100] if input_text else 'None'}...")
+        logger.debug(f"   Output: {output_text[:100] if output_text else 'None'}...")
+
+        return True
+
+    except Exception as e:
+        logger.error(f"❌ Failed to update trace I/O: {e}")
+        import traceback
+        logger.error(f"❌ Full error: {traceback.format_exc()}")
+        return False

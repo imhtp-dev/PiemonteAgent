@@ -238,3 +238,191 @@ def create_child_span(name: str, attributes: Optional[Dict[str, Any]] = None):
         Context manager for the child span
     """
     return APICallSpan(name, attributes)
+
+
+def trace_error(
+    error: Exception,
+    context: str = None,
+    extra_attrs: Optional[Dict[str, Any]] = None,
+    set_error_status: bool = True
+):
+    """
+    Log error to current LangFuse span with full details.
+
+    This is the recommended way to capture errors in LangFuse for debugging.
+    Use this in except blocks to ensure errors show up in traces.
+
+    Args:
+        error: The exception to record
+        context: Optional context describing where/why the error occurred
+        extra_attrs: Additional attributes to add (e.g., {"api": "booking", "retry_count": 2})
+        set_error_status: Whether to mark the span as ERROR status (default True)
+
+    Usage:
+        try:
+            result = await booking_api.create_booking(data)
+        except Exception as e:
+            trace_error(e, "booking_creation_failed", {"patient_id": patient_id})
+            # Handle error...
+
+    In LangFuse, this will show:
+        span: booking_creation (ERROR)
+        ├── error.context: "booking_creation_failed"
+        ├── error.type: "APIError"
+        ├── error.message: "Connection timeout"
+        ├── error.patient_id: "12345"
+        └── exception stack trace
+    """
+    current_span = trace.get_current_span()
+    if current_span and current_span.is_recording():
+        # Set span status to ERROR
+        if set_error_status:
+            current_span.set_status(Status(StatusCode.ERROR, str(error)[:200]))
+
+        # Record the full exception with stack trace
+        current_span.record_exception(error)
+
+        # Add error context
+        current_span.set_attribute("error.type", type(error).__name__)
+        current_span.set_attribute("error.message", str(error)[:500])
+
+        if context:
+            current_span.set_attribute("error.context", context)
+
+        # Add any extra attributes
+        if extra_attrs:
+            for key, value in extra_attrs.items():
+                if value is not None:
+                    str_value = str(value)[:200]
+                    current_span.set_attribute(f"error.{key}", str_value)
+
+        logger.debug(f"📊 Traced error to LangFuse: {type(error).__name__}: {str(error)[:100]}")
+
+
+def trace_sync_call(span_name: str, add_args: bool = True):
+    """
+    Decorator to trace synchronous function calls with OpenTelemetry.
+
+    Similar to @trace_api_call but for sync functions (not async).
+    Use for synchronous API calls like httpx.Client or requests.
+
+    Args:
+        span_name: Name for the span (e.g., "api.talkdesk_send")
+        add_args: Whether to add function kwargs as span attributes
+
+    Usage:
+        @trace_sync_call("api.talkdesk_report")
+        def send_to_talkdesk(data: dict) -> bool:
+            response = requests.post(url, json=data)
+            return response.ok
+    """
+    def decorator(func: Callable):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            with tracer.start_as_current_span(span_name) as span:
+                span.set_attribute("function_name", func.__name__)
+                span.set_attribute("module", func.__module__)
+
+                if add_args:
+                    for key, value in kwargs.items():
+                        if isinstance(value, (str, int, float, bool)):
+                            str_value = str(value)[:200]
+                            span.set_attribute(f"arg.{key}", str_value)
+
+                try:
+                    start_time = time.time()
+                    result = func(*args, **kwargs)
+                    elapsed_ms = (time.time() - start_time) * 1000
+
+                    span.set_attribute("success", True)
+                    span.set_attribute("latency_ms", round(elapsed_ms, 2))
+
+                    logger.debug(f"✅ {span_name} completed in {elapsed_ms:.0f}ms")
+                    return result
+
+                except Exception as e:
+                    span.set_status(Status(StatusCode.ERROR, str(e)))
+                    span.record_exception(e)
+                    span.set_attribute("success", False)
+                    span.set_attribute("error_type", type(e).__name__)
+                    span.set_attribute("error_message", str(e)[:500])
+
+                    logger.error(f"❌ {span_name} failed: {e}")
+                    raise
+
+        return wrapper
+    return decorator
+
+
+def add_flow_state_attributes(flow_state: Dict[str, Any]):
+    """
+    Add booking flow state attributes to the current span.
+
+    Use this to track booking progress in LangFuse traces.
+    Extracts key flow state fields safely (handles missing keys, objects).
+
+    Args:
+        flow_state: The flow_manager.state dictionary
+
+    Usage:
+        # In a handler function
+        add_flow_state_attributes(flow_manager.state)
+
+    Adds these span attributes:
+        - flow.current_node
+        - flow.selected_services (comma-separated names)
+        - flow.selected_center
+        - flow.patient_name
+        - flow.failure_count
+        - flow.is_cerba_member
+    """
+    current_span = trace.get_current_span()
+    if not current_span or not current_span.is_recording():
+        return
+
+    try:
+        # Current node
+        current_node = flow_state.get("current_node", "unknown")
+        current_span.set_attribute("flow.current_node", str(current_node))
+
+        # Selected services (extract names from objects)
+        selected_services = flow_state.get("selected_services", [])
+        if selected_services:
+            service_names = []
+            for svc in selected_services:
+                if hasattr(svc, "name"):
+                    service_names.append(svc.name)
+                elif isinstance(svc, dict):
+                    service_names.append(svc.get("name", "Unknown"))
+            if service_names:
+                current_span.set_attribute("flow.selected_services", ", ".join(service_names)[:200])
+
+        # Selected center
+        selected_center = flow_state.get("selected_center")
+        if selected_center:
+            center_name = getattr(selected_center, "name", None) or selected_center.get("name", "Unknown") if isinstance(selected_center, dict) else str(selected_center)
+            current_span.set_attribute("flow.selected_center", str(center_name)[:100])
+
+        # Patient name
+        patient_first = flow_state.get("patient_first_name", "")
+        patient_surname = flow_state.get("patient_surname", "")
+        if patient_first or patient_surname:
+            current_span.set_attribute("flow.patient_name", f"{patient_first} {patient_surname}".strip()[:100])
+
+        # Failure tracking
+        failure_tracker = flow_state.get("failure_tracker", {})
+        if failure_tracker:
+            current_span.set_attribute("flow.failure_count", failure_tracker.get("count", 0))
+
+        # Cerba membership
+        is_cerba_member = flow_state.get("is_cerba_member")
+        if is_cerba_member is not None:
+            current_span.set_attribute("flow.is_cerba_member", is_cerba_member)
+
+        # Call type (booking vs info)
+        current_agent = flow_state.get("current_agent")
+        if current_agent:
+            current_span.set_attribute("flow.agent_type", str(current_agent))
+
+    except Exception as e:
+        logger.debug(f"⚠️ Could not add flow state attributes: {e}")

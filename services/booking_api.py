@@ -8,6 +8,7 @@ from loguru import logger
 
 from services.config import config
 from services.auth import auth_service
+from utils.tracing import trace_sync_call, trace_error
 
 
 
@@ -40,6 +41,7 @@ def prepare_booking_data(booking_data: Dict[str, Any]) -> Dict[str, Any]:
     
     return prepared_data
 
+@trace_sync_call("api.booking_create", add_args=False)  # Don't trace args (contains PII)
 def create_booking(booking_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Create a booking using the POST amb/booking API

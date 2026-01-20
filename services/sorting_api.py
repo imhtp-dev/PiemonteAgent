@@ -9,8 +9,10 @@ from typing import Dict, List, Any
 from models.requests import HealthService
 from services.auth import auth_service
 from services.config import config
+from utils.tracing import trace_api_call, add_span_attributes
 
 
+@trace_api_call("api.sorting_call")
 async def call_sorting_api(
     health_center_uuid: str,
     gender: str,
@@ -42,6 +44,14 @@ async def call_sorting_api(
             "response_services": [...]  # UUIDs in response (may differ if package)
         }
     """
+    # Add search params to span for debugging
+    add_span_attributes({
+        "sorting.center_uuid": health_center_uuid,
+        "sorting.service_count": len(selected_services) if selected_services else 0,
+        "sorting.gender": gender,
+        "sorting.ambiente": ambiente or "prod"
+    })
+
     logger.info("=" * 80)
     logger.info("🔄 SORTING API CALL INITIATED")
     logger.info("=" * 80)

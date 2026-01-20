@@ -51,6 +51,7 @@ from config.telemetry import (
     get_tracer,
     get_conversation_tokens,
     flush_traces,
+    update_trace_io,
 )
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -694,6 +695,18 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"❌ Error in Healthcare Flow WebSocket handler: {e}")
         import traceback
         traceback.print_exc()
+
+        # ✅ Record error to LangFuse for debugging visibility
+        from utils.tracing import trace_error
+        trace_error(
+            error=e,
+            context="websocket_handler_error",
+            extra_attrs={
+                "session_id": session_id,
+                "business_status": business_status,
+                "start_node": start_node
+            }
+        )
     finally:
         # Extract and store ALL call data to Supabase (unified storage)
         # DUPLICATE LOGIC: Also in event handlers, but MUST be in finally block too
@@ -732,6 +745,42 @@ async def websocket_endpoint(websocket: WebSocket):
                         # Update call_extractor with token data
                         call_extractor.llm_token_count = token_data["total_tokens"]
                         logger.success(f"✅ Updated call_extractor with LangFuse tokens: {token_data['total_tokens']}")
+
+                        # Update trace with Input/Output from transcript
+                        try:
+                            transcript = call_extractor.transcript or []
+                            first_user_msg = None
+                            last_assistant_msg = None
+
+                            for entry in transcript:
+                                if entry.get("role") == "user" and first_user_msg is None:
+                                    first_user_msg = entry.get("content", "")
+                                if entry.get("role") == "assistant":
+                                    last_assistant_msg = entry.get("content", "")
+
+                            # Determine call_type for trace name
+                            flow_state = flow_manager.state or {}
+                            if flow_state.get("transfer_requested"):
+                                call_type = "transfer"
+                            elif flow_state.get("booking_code"):
+                                call_type = "booking"
+                            elif flow_state.get("selected_services"):
+                                call_type = "booking_started"
+                            else:
+                                call_type = "info"
+
+                            caller_phone = flow_state.get("caller_phone_from_talkdesk", "")
+
+                            if first_user_msg or last_assistant_msg:
+                                await update_trace_io(
+                                    session_id,
+                                    first_user_msg or "",
+                                    last_assistant_msg or "",
+                                    call_type=call_type,
+                                    caller_phone=caller_phone
+                                )
+                        except Exception as io_err:
+                            logger.error(f"❌ Failed to update trace I/O: {io_err}")
 
                     except Exception as e:
                         logger.error(f"❌ Failed to retrieve tokens from LangFuse: {e}")

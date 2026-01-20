@@ -254,9 +254,11 @@ class CallLogger:
                 log_content = f.read()
 
             # Create Azure blob path (similar to call data structure)
+            # Use blob_prefix from azure_storage for agent separation
             log_filename = Path(log_file_path).name
             today = datetime.now().strftime("%Y-%m-%d")
-            blob_path = f"call-logs/{today}/{log_filename}"
+            prefix = getattr(self.azure_storage, 'blob_prefix', '')
+            blob_path = f"{prefix}call-logs/{today}/{log_filename}"
 
             # Create new event loop for this thread
             loop = asyncio.new_event_loop()

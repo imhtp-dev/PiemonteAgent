@@ -92,7 +92,7 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer, VADParams
 from pipecat.transports.daily.transport import DailyParams, DailyTransport
 
 # OpenTelemetry & LangFuse tracing
-from config.telemetry import setup_tracing, get_tracer, get_conversation_tokens, flush_traces
+from config.telemetry import setup_tracing, get_tracer, get_conversation_tokens, flush_traces, update_trace_io
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
@@ -511,6 +511,43 @@ class DailyHealthcareFlowTester:
                             token_data = await get_conversation_tokens(self.session_id)
                             call_extractor.llm_token_count = token_data["total_tokens"]
                             logger.success(f"✅ Updated call_extractor with LangFuse tokens: {token_data['total_tokens']}")
+
+                            # Update trace with Input/Output from transcript
+                            try:
+                                transcript = call_extractor.transcript or []
+                                first_user_msg = None
+                                last_assistant_msg = None
+
+                                for entry in transcript:
+                                    if entry.get("role") == "user" and first_user_msg is None:
+                                        first_user_msg = entry.get("content", "")
+                                    if entry.get("role") == "assistant":
+                                        last_assistant_msg = entry.get("content", "")
+
+                                # Determine call_type for trace name
+                                flow_state = self.flow_manager.state or {}
+                                if flow_state.get("transfer_requested"):
+                                    call_type = "transfer"
+                                elif flow_state.get("booking_code"):
+                                    call_type = "booking"
+                                elif flow_state.get("selected_services"):
+                                    call_type = "booking_started"
+                                else:
+                                    call_type = "info"
+
+                                caller_phone = flow_state.get("caller_phone_from_talkdesk", "") or self.caller_phone
+
+                                if first_user_msg or last_assistant_msg:
+                                    await update_trace_io(
+                                        self.session_id,
+                                        first_user_msg or "",
+                                        last_assistant_msg or "",
+                                        call_type=call_type,
+                                        caller_phone=caller_phone
+                                    )
+                            except Exception as io_err:
+                                logger.error(f"❌ Failed to update trace I/O: {io_err}")
+
                         except Exception as e:
                             logger.error(f"❌ Failed to retrieve tokens from LangFuse: {e}")
 

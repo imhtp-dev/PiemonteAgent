@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from loguru import logger
+from utils.tracing import trace_sync_call, add_span_attributes
 #from auth import get_token
 
 
@@ -32,7 +33,16 @@ def get_token():
 
 
 
+@trace_sync_call("api.slot_search")
 def list_slot(health_center_uuid, date_search, uuid_exam, gender='m', date_of_birth='1980-04-13', start_time=None, end_time=None):
+    # Add search params to span for debugging
+    add_span_attributes({
+        "slot.center_uuid": health_center_uuid,
+        "slot.date": date_search,
+        "slot.service_count": len(uuid_exam) if isinstance(uuid_exam, list) else 1,
+        "slot.start_time": start_time or "not_specified",
+        "slot.end_time": end_time or "not_specified"
+    })
     token = get_token()
     ambiente="prod"
     api_url = f'https://3z0xh9v1f4.execute-api.eu-south-1.amazonaws.com/{ambiente}/amb/health-center/{health_center_uuid}/slot'
@@ -106,7 +116,14 @@ def list_slot(health_center_uuid, date_search, uuid_exam, gender='m', date_of_bi
         return []  # Return empty list on error
 
 
+@trace_sync_call("api.slot_create")
 def create_slot(start_slot,end_slot,pea):
+    # Add slot details to span for debugging
+    add_span_attributes({
+        "slot.start": start_slot,
+        "slot.end": end_slot,
+        "slot.pea": pea
+    })
     # Use slot times as-is (no timezone conversion needed)
     # Input format: 2025-10-27 11:25:00
     # API expects: 2025-10-27 11:25:00 (same format)

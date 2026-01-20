@@ -4,6 +4,7 @@ import os
 from loguru import logger
 import json
 from typing import Optional, Dict, Any
+from utils.tracing import trace_sync_call, add_span_attributes
 
 
 
@@ -50,16 +51,24 @@ def get_talkdesk_access_token() -> Optional[str]:
         
 
 
+@trace_sync_call("api.talkdesk_send")
 def send_to_talkdesk(call_data: Dict[str, Any]) -> bool:
         """
         Invia i dati a Talkdesk
-        
+
         Args:
             call_data (Dict[str, Any]): Dati della chiamata analizzata
-            
+
         Returns:
             bool: True se invio riuscito
         """
+        # Add non-sensitive info to span
+        add_span_attributes({
+            "talkdesk.interaction_id": call_data.get("interaction_id", "unknown"),
+            "talkdesk.sentiment": call_data.get("sentiment", "unknown"),
+            "talkdesk.service": call_data.get("service", "unknown"),
+            "talkdesk.duration_seconds": call_data.get("duration_seconds", 0)
+        })
         try:
             access_token = get_talkdesk_access_token()
             if not access_token:

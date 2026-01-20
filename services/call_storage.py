@@ -23,9 +23,16 @@ class CallDataStorage:
             self.blob_service = BlobServiceClient.from_connection_string(self.connection_string)
             self.container_name = "call-data"
 
+            # Blob prefix for separating different agents (e.g., "piemonte/")
+            # Lombardy uses empty prefix, Piemonte uses "piemonte/"
+            self.blob_prefix = os.getenv("AZURE_BLOB_PREFIX", "")
+            if self.blob_prefix and not self.blob_prefix.endswith("/"):
+                self.blob_prefix += "/"
+
             # Ensure container exists
             self._ensure_container_exists()
-            logger.info("✅ Azure Storage initialized successfully")
+            prefix_info = f" (prefix: {self.blob_prefix})" if self.blob_prefix else ""
+            logger.info(f"✅ Azure Storage initialized successfully{prefix_info}")
 
         except Exception as e:
             logger.error(f"❌ Failed to initialize Azure Storage: {e}")
@@ -60,7 +67,7 @@ class CallDataStorage:
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             date_folder = datetime.now().strftime("%Y-%m-%d")
-            blob_name = f"calls/{date_folder}/{timestamp}_{session_id}.json"
+            blob_name = f"{self.blob_prefix}calls/{date_folder}/{timestamp}_{session_id}.json"
 
             blob_client = self.blob_service.get_blob_client(
                 container=self.container_name,
@@ -186,7 +193,7 @@ class CallDataStorage:
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             date_folder = datetime.now().strftime("%Y-%m-%d")
-            blob_name = f"fiscal-codes/{date_folder}/{timestamp}_{session_id}_fiscal.json"
+            blob_name = f"{self.blob_prefix}fiscal-codes/{date_folder}/{timestamp}_{session_id}_fiscal.json"
 
             fiscal_data = {
                 "session_id": session_id,
@@ -235,7 +242,7 @@ class CallDataStorage:
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             date_folder = datetime.now().strftime("%Y-%m-%d")
-            blob_name = f"caller-phones/{date_folder}/{timestamp}_{session_id}_phone.json"
+            blob_name = f"{self.blob_prefix}caller-phones/{date_folder}/{timestamp}_{session_id}_phone.json"
 
             phone_data = {
                 "session_id": session_id,
