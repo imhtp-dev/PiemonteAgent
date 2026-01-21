@@ -25,9 +25,11 @@ from flows.handlers.booking_handlers import (
     confirm_booking_summary_and_proceed,
     update_date_and_search_slots,
     show_more_same_day_slots_handler,
-    search_different_date_handler
+    search_different_date_handler,
+    handle_radius_expansion_response
 )
 from config.settings import settings
+from utils.italian_time import time_to_italian_words
 
 
 def create_orange_box_node() -> NodeConfig:
@@ -225,43 +227,61 @@ def create_final_center_search_node() -> NodeConfig:
     )
 
 
-def create_final_center_selection_node(centers: List[HealthCenter], services: List[HealthService]) -> NodeConfig:
-    """Create final center selection node with top 3 centers"""
+def create_final_center_selection_node(centers: List[HealthCenter], services: List[HealthService], expanded_search: bool = False) -> NodeConfig:
+    """Create final center selection node with top 3 centers
+
+    Args:
+        centers: List of health centers to choose from
+        services: List of health services being booked
+        expanded_search: True if search was expanded beyond initial 20km radius
+    """
     top_centers = centers[:3]
     service_names = ", ".join([s.name for s in services])
 
-    # Create paragraph-style listing of health centers
+    # Create Italian ordinals for natural speech
+    italian_ordinals = ["Il primo", "il secondo", "il terzo", "il quarto", "il quinto"]
+
+    # Create TTS-friendly sentence listing of health centers (Italian)
     if len(top_centers) == 1:
-        centers_text = f"The available health center is {top_centers[0].name}."
+        centers_text = f"Il centro disponibile è {top_centers[0].name}."
     elif len(top_centers) == 2:
-        centers_text = f"The first one is {top_centers[0].name}, and the second is {top_centers[1].name}."
+        centers_text = f"Il primo centro è {top_centers[0].name}, e il secondo è {top_centers[1].name}."
     elif len(top_centers) == 3:
-        centers_text = f"The first one is {top_centers[0].name}, the second is {top_centers[1].name}, and the third is {top_centers[2].name}."
+        centers_text = f"Il primo centro è {top_centers[0].name}, il secondo è {top_centers[1].name}, e il terzo è {top_centers[2].name}."
     else:
         # Fallback for more than 3 centers
-        centers_list = [f"the {'first' if i == 0 else 'second' if i == 1 else 'third' if i == 2 else str(i+1)+'th'} one is {center.name}" for i, center in enumerate(top_centers)]
-        centers_text = ", ".join(centers_list[:-1]) + f", and {centers_list[-1]}."
+        centers_parts = [f"{italian_ordinals[i]} è {center.name}" for i, center in enumerate(top_centers[:5])]
+        centers_text = ", ".join(centers_parts[:-1]) + f", e {centers_parts[-1]}."
 
-    task_content = f"""Here are some health centers that offer {service_names}. {centers_text}
+    # Build UUID mapping for function calls (internal use only)
+    uuid_mapping = {center.name: center.uuid for center in top_centers}
 
-Which one would you like to choose for your appointment?"""
-    
+    # Different intro based on whether search was expanded
+    if expanded_search:
+        intro_text = f"Ho cercato in un'area più ampia e ho trovato alcuni centri che offrono {service_names}."
+    else:
+        intro_text = f"Ho trovato alcuni centri che offrono {service_names}."
+
+    task_content = f"""Say EXACTLY this (one natural flowing sentence, NO lists or bullet points):
+"{intro_text} {centers_text} Quale preferisci?" """
+
     return NodeConfig(
         name="final_center_selection",
         role_messages=[{
             "role": "system",
-            "content": f"""You are helping a patient choose between {len(top_centers)} health centers that can provide their services: {service_names}.
+            "content": f"""Help patient choose a health center for: {service_names}.
 
-IMPORTANT: You must clearly present the health centers and ask the patient to choose one. Never say generic phrases like "complete the booking" - instead, present the specific centers and ask them to choose.
+🚨 TTS-FRIENDLY OUTPUT RULES (CRITICAL):
+- NEVER use bullet points, numbered lists, or line breaks
+- NEVER format as "1. Centro X\\n2. Centro Y" - TTS reads this without pauses
+- Speak in ONE natural Italian sentence that flows smoothly
+- Example GOOD: "Il primo centro è Milano Biochimico, il secondo è Cologno Curie, e il terzo è Rozzano Delta Medica. Quale preferisci?"
+- Example BAD: "1. Milano Biochimico\\n2. Cologno Curie\\n3. Rozzano Delta Medica"
 
-When the patient selects a center, call the select_center function with the correct center UUID.
+Center name → UUID mapping (for function calls only, NEVER speak UUIDs):
+{uuid_mapping}
 
-Available centers:
-{chr(10).join([f"- {center.name} (UUID: {center.uuid})" for center in top_centers])}
-
-CRITICAL: When speaking to users, only mention the full centers name (e.g., "Milano Via Emilio de Marchi 4 - Biochimico, Cologno Monzese Viale Liguria 37 - Curie, ozzano Viale Toscana 35/37 - Delta Medica"). NEVER read full addresses or detailed information aloud.
-
-Always speak naturally like a human. {settings.language_config}"""
+When patient selects a center, call select_center with the correct UUID. {settings.language_config}"""
         }],
         task_messages=[{
             "role": "system",
@@ -279,6 +299,53 @@ Always speak naturally like a human. {settings.language_config}"""
                     }
                 },
                 required=["center_uuid"]
+            )
+        ]
+    )
+
+
+def create_ask_expand_radius_node(address: str, service_name: str, current_radius: int, next_radius: int) -> NodeConfig:
+    """Create node to ask user if they want to expand search radius
+
+    Args:
+        address: Patient's address/location
+        service_name: Name of the service being searched
+        current_radius: Current search radius that found no results (22 or 42)
+        next_radius: Proposed expanded radius (42 or 62)
+    """
+    return NodeConfig(
+        name="ask_expand_radius",
+        role_messages=[{
+            "role": "system",
+            "content": f"""No health centers found within {current_radius}km of {address}.
+Ask the user if they want to expand the search to {next_radius}km.
+
+Be conversational and helpful. Explain that expanding the search might find centers further away.
+When user responds yes/no, call expand_search_radius with expand=true or expand=false.
+
+{settings.language_config}"""
+        }],
+        task_messages=[{
+            "role": "system",
+            "content": f"""Say in Italian: "Mi dispiace, non ho trovato centri sanitari entro {current_radius} chilometri da {address} per {service_name}. Vuoi che cerchi in un'area più ampia, fino a {next_radius} chilometri?" """
+        }],
+        functions=[
+            FlowsFunctionSchema(
+                name="expand_search_radius",
+                handler=handle_radius_expansion_response,
+                description="Handle user's decision about expanding the search radius",
+                properties={
+                    "expand": {
+                        "type": "boolean",
+                        "description": "True if user wants to expand search, False if not"
+                    },
+                    "next_radius": {
+                        "type": "integer",
+                        "description": f"The next radius to search ({next_radius}km)",
+                        "default": next_radius
+                    }
+                },
+                required=["expand"]
             )
         ]
     )
@@ -811,22 +878,30 @@ Ask the user which time works best for them."""
             time_key = slot['start_time_24h']
             _current_session_slots[time_key] = slot  # Store full slot data by time
 
+            # Convert time to Italian words for natural speech (prevents TTS double-reading)
+            time_italian = time_to_italian_words(time_key)
+
             minimal_slots_for_llm.append({
-                'time': slot['start_time_24h'],
+                'time': time_key,  # Keep numeric for UUID mapping
+                'time_italian': time_italian,  # Italian words for speech
                 'uuid': slot['providing_entity_availability_uuid'],
                 'date': slot['date_key']
             })
 
         slot_context = {
-            'available_times': [slot['time'] for slot in minimal_slots_for_llm],
+            # Send Italian word times to LLM for natural speech
+            'available_times': [slot['time_italian'] for slot in minimal_slots_for_llm],
             'service_name': service.name,
             'slot_count': len(minimal_slots_for_llm),
-            'time_to_uuid_map': {slot['time']: slot['uuid'] for slot in minimal_slots_for_llm}
+            # Keep numeric time→UUID mapping for function calls
+            'time_to_uuid_map': {slot['time']: slot['uuid'] for slot in minimal_slots_for_llm},
+            # Add Italian→UUID mapping for LLM convenience
+            'italian_to_uuid_map': {slot['time_italian']: slot['uuid'] for slot in minimal_slots_for_llm}
         }
 
         logger.success(f"🚀 OPTIMIZED: Sending only {len(minimal_slots_for_llm)} slots to LLM instead of {len(slots)}")
-        logger.info(f"🚀 Times being sent: {[slot['time'] for slot in minimal_slots_for_llm]}")
-        logger.info(f"🚀 Time→UUID mapping: {slot_context['time_to_uuid_map']}")
+        logger.info(f"🚀 Times (Italian): {[slot['time_italian'] for slot in minimal_slots_for_llm]}")
+        logger.info(f"🚀 Italian→UUID mapping: {slot_context['italian_to_uuid_map']}")
     else:
         # No specific slots selected, just dates
         slot_context = {
@@ -842,54 +917,28 @@ Ask the user which time works best for them."""
         name="slot_selection",
         role_messages=[{
             "role": "system",
-            "content": f"""It's currently 2025. Help the patient select from available appointment slots for {service.name}.
+            "content": f"""Help the patient select from available appointment slots for {service.name}.
 
-🎯 OPTIMIZED SLOT PRESENTATION: Only the most relevant slots have been pre-filtered for you based on user preferences.
+🎯 SLOT PRESENTATION: {slot_context.get('slot_count', 'Unknown')} slots available.
 
-{slot_context.get('slot_count', 'Unknown')} carefully selected slots. When presenting times:
-- ALWAYS use 24-hour time format (e.g., 13:40, 15:30) - NEVER convert to 12-hour format
-- CRITICAL: ONLY present times from this list: {slot_context.get('available_times', [])}
+📢 AVAILABLE TIMES (already in Italian - speak these EXACTLY as written):
+{slot_context.get('available_times', [])}
 
-📅 DATE AND TIME FORMATTING RULES (CRITICAL - MUST FOLLOW):
-- ALWAYS remove leading zeros from BOTH hours AND minutes
-- Examples of CORRECT formatting:
-  * "07:30" → "7:30" (remove leading 0 from hour)
-  * "03:15" → "3:15" (remove leading 0 from hour)
-  * "09:45" → "9:45" (remove leading 0 from hour)
-  * "11:05" → "11:5" (remove leading 0 from minute!)
-  * "14:05" → "14:5" (remove leading 0 from minute!)
-  * "08:07" → "8:7" (remove ALL leading zeros!)
-- For times ending in :00, say "o'clock": "07:00" → "7 o'clock", "14:00" → "14 o'clock"
-- Remove leading zeros from dates: "01 November" → "1 November", "08 December" → "8 December"
-- Keep dates without leading zeros as-is: "15 November" → "15 November"
+🗣️ SPEECH RULES - CRITICAL:
+- Times are PRE-CONVERTED to Italian words - speak them EXACTLY as shown
+- Do NOT add numeric times - just say the Italian words directly
+- Example: If list shows "otto e trenta", say "otto e trenta" (NOT "8:30, otto e trenta")
 
-EXAMPLES:
-- "08 November 2025 alle 07:00" → "8 November 2025 alle 7 o'clock"
-- "15 November 2025 alle 14:05" → "15 November 2025 alle 14:5" (remove the 0 from 05!)
-- "01 December 2025 alle 03:30" → "1 December 2025 alle 3:30"
-- "30 October 2025 alle 11:05" → "30 October 2025 alle 11:5" (remove the 0 from 05!)
-- "05 November 2025 alle 09:07" → "5 November 2025 alle 9:7" (remove ALL leading zeros!)
+⚡ UUID MAPPING for function calls (Italian time → UUID):
+{slot_context.get('italian_to_uuid_map', {})}
 
-- IMPORTANT: When speaking times aloud in Italian, say them naturally:
-  * "7:30" → "sette e trenta" (NOT "zero sette e trenta")
-  * "14:5" → "quattordici e cinque" (remove the leading zero from 05!)
-  * "11:5" → "undici e cinque" (NOT "undici e zero cinque")
-  * "9 o'clock" → "nove in punto"
+🚨 WHEN USER SELECTS A TIME:
+1. User says Italian time (e.g., "otto e trenta" or "le otto e mezza")
+2. Match to closest time in the mapping above
+3. Use the UUID as providing_entity_availability_uuid
 
-- IMPORTANT: When calling function, use the UUID mapping below
 - Never mention prices, UUIDs, or technical details
 - Be conversational and human
-
-🚀 AVAILABLE TIMES: {slot_context.get('available_times', [])}
-
-⚡ CRITICAL: TIME→UUID MAPPING for function calls:
-{slot_context.get('time_to_uuid_map', {})}
-
-🚨 MANDATORY: When user selects a time, you MUST:
-1. Find the time in the mapping above (e.g., if user says "17:15", look for "17:15" in the mapping)
-2. Use the corresponding UUID value (NOT the time) as providing_entity_availability_uuid
-3. EXAMPLE: If mapping shows {{"17:15": "05ee29df-7257-4beb-9b46-0efb0625d686"}}
-   → providing_entity_availability_uuid = "05ee29df-7257-4beb-9b46-0efb0625d686" (NOT "17:15")
 
 {settings.language_config}"""
         }],

@@ -7,7 +7,6 @@ from typing import Dict, Any, Tuple
 from loguru import logger
 
 from pipecat_flows import FlowManager, NodeConfig, FlowArgs
-from services.cerba_api import cerba_api
 from services.get_flowNb import genera_flow
 from models.requests import HealthService
 
@@ -62,6 +61,10 @@ async def generate_flow_and_transition(args: FlowArgs, flow_manager: FlowManager
 
 async def perform_flow_generation_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
     """Perform the actual flow generation after TTS message"""
+    # Hardcoded health center UUID for flow generation (Tradate center)
+    # This avoids API call - actual center search happens later in Stage 5
+    HARDCODED_HC_UUID = "c5535638-6c18-444c-955d-89139d8276be"
+
     try:
         # Get stored flow parameters
         params = flow_manager.state.get("pending_flow_params", {})
@@ -79,32 +82,13 @@ async def perform_flow_generation_and_transition(args: FlowArgs, flow_manager: F
         date_of_birth = params["date_of_birth"]
         address = params["address"]
 
-        # Format date for API call
-        dob_formatted = date_of_birth.replace("-", "")
-        
         logger.info(f"🔄 Generating decision flow for: {primary_service.name}")
-        
-        # Get initial health centers to use for flow generation
-        health_centers = cerba_api.get_health_centers(
-            health_services=[primary_service.uuid],
-            gender=gender,
-            date_of_birth=dob_formatted,
-            address=address
-        )
-        
-        if not health_centers:
-            from flows.nodes.booking import create_no_centers_node
-            return {
-                "success": False,
-                "message": f"No health centers found in {address} for {primary_service.name}"
-            }, create_no_centers_node(address, primary_service.name)
-        
-        # Use first available health center for flow generation
-        health_center = health_centers[0]
-        
-        # Generate the decision flow using get_flowNb.py with health centers list - run in executor to avoid blocking
-        hc_uuids = [center.uuid for center in health_centers]
-        logger.info(f"🔄 Calling genera_flow with: centers={hc_uuids[:3]}, service={primary_service.uuid}")
+        logger.info(f"🏥 Using hardcoded health center UUID for flow generation: {HARDCODED_HC_UUID}")
+
+        # Use hardcoded health center UUID for flow generation
+        # Actual center availability will be checked in Stage 5 with radius expansion
+        hc_uuids = [HARDCODED_HC_UUID]
+        logger.info(f"🔄 Calling genera_flow with: centers={hc_uuids}, service={primary_service.uuid}")
 
         import asyncio
         loop = asyncio.get_event_loop()
@@ -124,7 +108,7 @@ async def perform_flow_generation_and_transition(args: FlowArgs, flow_manager: F
         
         # Store the generated flow in state
         flow_manager.state["generated_flow"] = generated_flow
-        flow_manager.state["available_centers"] = health_centers[:5]
+        # Note: available_centers will be populated later in Stage 5 (center search with radius expansion)
         
         logger.success(f"✅ Generated decision flow for {primary_service.name}")
         

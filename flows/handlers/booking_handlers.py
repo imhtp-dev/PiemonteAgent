@@ -74,7 +74,13 @@ async def search_final_centers_and_transition(args: FlowArgs, flow_manager: Flow
 
 
 async def perform_center_search_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
-    """Perform the actual center search after TTS message"""
+    """Perform the actual center search after TTS message with interactive radius expansion
+
+    Radius progression (interactive, user must confirm each expansion):
+    - Default: 22km (API default, no radius param)
+    - First expansion: 42km (if user agrees)
+    - Second expansion: 62km (if user agrees)
+    """
     try:
         # Get stored center search parameters
         params = flow_manager.state.get("pending_center_search_params", {})
@@ -93,47 +99,56 @@ async def perform_center_search_and_transition(args: FlowArgs, flow_manager: Flo
         date_of_birth = params["date_of_birth"]
         address = params["address"]
 
+        # Check if this is a retry with expanded radius
+        current_radius = flow_manager.state.get("current_search_radius", None)  # None = default 22km
+
         # Format date for API
         dob_formatted = date_of_birth.replace("-", "")
 
-        # Call Cerba API with all selected services - run in executor with retry logic
         import asyncio
-        from functools import partial
         loop = asyncio.get_event_loop()
-        logger.info(f"🔍 Starting non-blocking health center search for {len(service_uuids)} services in {address}")
 
-        def _center_search_with_retry():
-            """Wrapper to run center search with retry logic"""
+        radius_display = current_radius if current_radius else "22 (default)"
+        logger.info(f"🔍 Searching health centers with radius={radius_display}km for {len(service_uuids)} services in {address}")
+
+        def _search_centers():
+            """Search health centers with current radius"""
             result, error = retry_api_call(
                 api_func=cerba_api.get_health_centers,
                 max_retries=2,
                 retry_delay=1.0,
-                func_name="Health Center Search API",
+                func_name=f"Health Center Search API (radius={radius_display}km)",
                 health_services=service_uuids,
                 gender=gender,
                 date_of_birth=dob_formatted,
-                address=address
+                address=address,
+                radius=current_radius  # None = API default 22km
             )
             if error:
                 raise error
             return result
 
         try:
-            health_centers = await loop.run_in_executor(None, _center_search_with_retry)
-        except Exception as api_error:
-            logger.error(f"❌ Center search failed after 2 retries: {api_error}")
+            health_centers = await loop.run_in_executor(None, _search_centers)
+        except Exception as e:
+            logger.error(f"❌ API error during center search: {e}")
             from flows.nodes.transfer import create_transfer_node
             return {
                 "success": False,
-                "error": str(api_error),
+                "error": str(e),
                 "message": "Mi dispiace, c'è un problema tecnico. Ti trasferisco a un operatore."
             }, create_transfer_node()
 
+        # Store current radius for tracking
+        flow_manager.state["search_radius_used"] = current_radius or 22
+
         logger.info(f"✅ Health center search completed: found {len(health_centers) if health_centers else 0} centers")
-        
+
         if health_centers:
-            flow_manager.state["final_health_centers"] = health_centers[:3]  # Top 3 centers
-            
+            # Centers found! Show them to user
+            flow_manager.state["final_health_centers"] = health_centers[:3]
+            flow_manager.state["expanded_search"] = current_radius is not None and current_radius > 22
+
             centers_data = []
             for center in health_centers[:3]:
                 centers_data.append({
@@ -142,33 +157,105 @@ async def perform_center_search_and_transition(args: FlowArgs, flow_manager: Flo
                     "address": center.address,
                     "uuid": center.uuid
                 })
-            
+
+            # Create message based on whether search was expanded
+            if flow_manager.state.get("expanded_search"):
+                message = f"Found {len(centers_data)} health centers in a broader area around {address}"
+            else:
+                message = f"Found {len(centers_data)} health centers near {address}"
+
             result = {
                 "success": True,
                 "count": len(centers_data),
                 "centers": centers_data,
                 "services": service_names,
-                "message": f"Found {len(centers_data)} health centers in {address} for the selected services"
+                "radius_km": current_radius or 22,
+                "expanded_search": flow_manager.state.get("expanded_search", False),
+                "message": message
             }
-            
-            # Dynamically create final center selection node
+
             from flows.nodes.booking import create_final_center_selection_node
-            return result, create_final_center_selection_node(health_centers[:3], selected_services)
+            return result, create_final_center_selection_node(
+                health_centers[:3],
+                selected_services,
+                expanded_search=flow_manager.state.get("expanded_search", False)
+            )
         else:
-            # Dynamically create no centers found node
+            # No centers found - determine next action based on current radius
             services_text = ", ".join(service_names)
-            error_message = f"No health centers found in {address} for the services: {services_text}"
-            from flows.nodes.booking import create_no_centers_node
-            return {
-                "success": False,
-                "message": error_message,
-                "centers": []
-            }, create_no_centers_node(address, services_text)
-    
+
+            if current_radius is None:
+                # First search (22km default) failed - ask to expand to 42km
+                logger.info(f"⚠️ No centers at default 22km, asking user to expand to 42km")
+                from flows.nodes.booking import create_ask_expand_radius_node
+                return {
+                    "success": False,
+                    "message": f"No centers found within 22km of {address}",
+                    "next_radius": 42
+                }, create_ask_expand_radius_node(address, services_text, current_radius=22, next_radius=42)
+
+            elif current_radius == 42:
+                # 42km search failed - ask to expand to 62km
+                logger.info(f"⚠️ No centers at 42km, asking user to expand to 62km")
+                from flows.nodes.booking import create_ask_expand_radius_node
+                return {
+                    "success": False,
+                    "message": f"No centers found within 42km of {address}",
+                    "next_radius": 62
+                }, create_ask_expand_radius_node(address, services_text, current_radius=42, next_radius=62)
+
+            else:
+                # 62km search failed - maximum reached, end booking
+                logger.warning(f"⚠️ No centers found even at maximum 62km radius")
+                from flows.nodes.booking import create_no_centers_node
+                return {
+                    "success": False,
+                    "message": f"No health centers found within 62km of {address} for: {services_text}",
+                    "centers": [],
+                    "max_radius_searched": 62
+                }, create_no_centers_node(address, services_text)
+
     except Exception as e:
         logger.error(f"Final center search error: {e}")
         from flows.nodes.completion import create_error_node
         return {"success": False, "message": "Unable to find health centers"}, create_error_node("Unable to find health centers. Please try again.")
+
+
+async def handle_radius_expansion_response(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
+    """Handle user's response to radius expansion question"""
+    expand = args.get("expand", False)
+    next_radius = args.get("next_radius", 42)
+
+    if expand:
+        # User wants to expand - set the new radius and re-trigger search
+        flow_manager.state["current_search_radius"] = next_radius
+        logger.info(f"📍 User agreed to expand search to {next_radius}km")
+
+        # Get address for TTS message
+        params = flow_manager.state.get("pending_center_search_params", {})
+        address = params.get("address", "your location")
+
+        # Create processing node with TTS message about expanded search
+        tts_message = f"Sto cercando centri sanitari in un raggio di {next_radius} chilometri da {address}. Attendi..."
+
+        from flows.nodes.booking import create_center_search_processing_node
+        return {
+            "success": True,
+            "message": f"Expanding search to {next_radius}km"
+        }, create_center_search_processing_node(address, tts_message)
+    else:
+        # User declined expansion - end the booking flow
+        logger.info(f"❌ User declined radius expansion")
+        params = flow_manager.state.get("pending_center_search_params", {})
+        service_names = params.get("service_names", [])
+        address = params.get("address", "your location")
+        services_text = ", ".join(service_names)
+
+        from flows.nodes.booking import create_no_centers_node
+        return {
+            "success": False,
+            "message": "User declined to expand search radius"
+        }, create_no_centers_node(address, services_text)
 
 
 async def select_center_and_book(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
@@ -454,9 +541,10 @@ async def check_cerba_membership_and_transition(args: FlowArgs, flow_manager: Fl
 
 async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
     """Collect preferred date and optional time preference for appointment"""
-    preferred_date = args.get("preferred_date", "").strip()
-    preferred_time = args.get("preferred_time", "").strip()
-    time_preference = args.get("time_preference", "any").strip().lower()
+    # Use (value or "") to handle explicit None from LLM (dict.get default only works for missing keys)
+    preferred_date = (args.get("preferred_date") or "").strip()
+    preferred_time = (args.get("preferred_time") or "").strip()
+    time_preference = (args.get("time_preference") or "any").strip().lower()
     first_available_mode = args.get("first_available_mode", False)
 
     if not preferred_date:
@@ -616,8 +704,9 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
 
 async def update_date_and_search_slots(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
     """Update date preference and immediately search for slots - optimized for date selection flow"""
-    preferred_date = args.get("preferred_date", "").strip()
-    time_preference = args.get("time_preference", "preserve_existing").strip()
+    # Use (value or "") to handle explicit None from LLM
+    preferred_date = (args.get("preferred_date") or "").strip()
+    time_preference = (args.get("time_preference") or "preserve_existing").strip()
 
     if not preferred_date:
         return {"success": False, "message": "Please provide a date for your appointment"}, None
@@ -1122,9 +1211,19 @@ async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowM
 
 async def select_slot_and_book(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
     """Handle slot selection and proceed to booking creation"""
-    providing_entity_availability_uuid = args.get("providing_entity_availability_uuid", "").strip()
-    selected_time = args.get("selected_time", "").strip()
-    selected_date = args.get("selected_date", "").strip()
+    # Use (value or "") to handle explicit None from LLM
+    providing_entity_availability_uuid = (args.get("providing_entity_availability_uuid") or "").strip()
+    selected_time_raw = (args.get("selected_time") or "").strip()
+    selected_date = (args.get("selected_date") or "").strip()
+
+    # Convert Italian words to numeric format if needed (e.g., "quattordici e quaranta" → "14:40")
+    from utils.italian_time import italian_words_to_time
+    numeric_time = italian_words_to_time(selected_time_raw)
+    if numeric_time:
+        selected_time = numeric_time
+        logger.info(f"🔄 Converted Italian time '{selected_time_raw}' → '{selected_time}'")
+    else:
+        selected_time = selected_time_raw
 
     # COMPREHENSIVE DEBUG LOGGING FOR SLOT SELECTION
     logger.info("🔍 DEBUG: === SLOT SELECTION STARTED ===")

@@ -128,18 +128,20 @@ class CerbaAPIService:
         gender: str,
         date_of_birth: str,
         address: str,
-        health_services_availability: bool = True
+        health_services_availability: bool = True,
+        radius: Optional[int] = None
     ) -> List[HealthCenter]:
         """
         Get health centers that provide specified services
-        
+
         Args:
             health_services: List of service UUIDs
             gender: Patient gender ("m" or "f")
             date_of_birth: Date in YYYYMMDD format
             address: Location to search
             health_services_availability: Filter by availability
-            
+            radius: Optional search radius in km (default 22km if not specified)
+
         Returns:
             List of health centers
         """
@@ -167,6 +169,11 @@ class CerbaAPIService:
             "address": address,
             "health_services_availability": health_services_availability
         }
+
+        # Add radius if specified (otherwise API uses default 22km)
+        if radius is not None:
+            params["radius"] = radius
+            logger.info(f"🔍 Searching health centers with radius={radius}km")
         
         try:
             response = self._make_request("amb/health-center", params)

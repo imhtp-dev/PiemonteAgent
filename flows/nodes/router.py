@@ -46,6 +46,13 @@ You are the initial contact point for incoming calls.
 - Patient wants human → use request_transfer
 - If info tool fails to answer → offer to transfer
 
+🚫 **SPORTS MEDICINE EXCEPTION (CRITICAL):**
+If patient wants to book a SPORTS MEDICINE visit (visita sportiva, medicina dello sport, certificato sportivo, idoneità sportiva, visita agonistica, visita non agonistica, certificato medico sportivo), DO NOT use start_booking. Instead:
+1. Say: "Mi dispiace, la prenotazione per visite di medicina sportiva non è disponibile tramite questo servizio automatico."
+2. Ask: "Vuoi che ti trasferisca a un operatore umano che potrà aiutarti?"
+3. If they say yes → call request_transfer
+4. If they say no → ask how else you can help
+
 {settings.language_config}"""
         }],
         task_messages=[{
@@ -67,6 +74,7 @@ You are the initial contact point for incoming calls.
 
 **FOR BOOKING:**
 - "Voglio prenotare" → call start_booking
+- ⚠️ EXCEPTION: If booking is for SPORTS MEDICINE (visita sportiva, medicina dello sport, certificato sportivo, idoneità sportiva) → DO NOT call start_booking. Say sports medicine booking is not available via this service and ask if they want transfer to human operator.
 
 **FOR TRANSFER:**
 - "Vorrei parlare con un operatore" → call request_transfer

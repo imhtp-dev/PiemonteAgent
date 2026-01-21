@@ -10,6 +10,7 @@ from flows.handlers.patient_handlers import (
     verify_basic_info_and_transition
 )
 from config.settings import settings
+from utils.italian_time import date_to_italian_words
 
 
 def create_collect_address_node() -> NodeConfig:
@@ -104,23 +105,31 @@ def create_collect_dob_node() -> NodeConfig:
 
 def create_verify_basic_info_node(address: str, gender: str, dob: str) -> NodeConfig:
     """Create verification node for address, gender, and DOB (birth city removed)"""
-    gender_display = "Male" if gender.lower() == "m" else "Female" if gender.lower() == "f" else gender
+    # Italian gender words for natural speech
+    gender_italian = "maschio" if gender.lower() == "m" else "femmina" if gender.lower() == "f" else gender
 
-    verification_text = f"""Verify the information I've collected:
-
-Your Address is {address}, your gender is {gender_display}, and date of birth {dob}.
-
-Is this data correct? Answer "yes" if it's correct, or tell me what needs to be changed."""
+    # Convert DOB to Italian words for natural TTS (e.g., "2007-04-27" → "ventisette aprile duemilaesette")
+    dob_italian = date_to_italian_words(dob)
 
     return NodeConfig(
         name="verify_basic_info",
         role_messages=[{
             "role": "system",
-            "content": f"""Present patient info for verification. When user responds, call verify_basic_info: confirms → action="confirm", changes → action="change" + field_to_change + new_value. {settings.language_config}"""
+            "content": f"""Present patient info for verification in a NATURAL FLOWING SENTENCE.
+
+🚨 TTS-FRIENDLY OUTPUT RULES (CRITICAL):
+- NEVER use bullet points, lists, or line breaks
+- NEVER format as "Sesso: X, Data: Y" - this sounds robotic when spoken
+- Speak in ONE natural Italian sentence that flows smoothly
+- The date of birth is ALREADY in Italian words - speak it exactly as provided
+- Example of GOOD output: "Il tuo sesso è maschio, la tua data di nascita è quindici aprile millenovecentonovanta, e il tuo indirizzo è Milano. È tutto corretto?"
+- Example of BAD output: "Sesso: Maschio\\nData di nascita: 15/04/1990\\nIndirizzo: Milano"
+
+When user responds, call verify_basic_info: confirms → action="confirm", changes → action="change" + field_to_change + new_value. {settings.language_config}"""
         }],
         task_messages=[{
             "role": "system",
-            "content": verification_text
+            "content": f"""Say EXACTLY this (one natural sentence, no lists): "Ricapitoliamo le informazioni. Il tuo sesso è {gender_italian}, la tua data di nascita è {dob_italian}, e il tuo indirizzo è {address}. È tutto corretto? Dimmi di sì oppure cosa devo modificare." """
         }],
         functions=[
             FlowsFunctionSchema(
