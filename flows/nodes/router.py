@@ -27,7 +27,7 @@ def create_router_node() -> NodeConfig:
         name="router",
         role_messages=[{
             "role": "system",
-            "content": f"""You are Voila, a helpful virtual assistant for Cerba Healthcare (Piemonte, Italy).
+            "content": f"""You are Ualà, a helpful virtual assistant for Cerba Healthcare (Piemonte, Italy).
 You are the initial contact point for incoming calls.
 
 **Your capabilities (tools available):**
@@ -57,7 +57,7 @@ If patient wants to book a SPORTS MEDICINE visit (visita sportiva, medicina dell
         }],
         task_messages=[{
             "role": "system",
-            "content": f"""Greet the caller: 'Sono Voila, assistente virtuale di Cerba HealthCare... puoi chiedermi informazioni o prenotare le prestazioni di poliambulatorio e radiologia, per laboratorio e medicina dello sport devo passarti ad un mio collega.'
+            "content": f"""Greet the caller: 'Sono Ualà, assistente virtuale di Cerba HealthCare... puoi chiedermi informazioni o prenotare le prestazioni di poliambulatorio e radiologia, per laboratorio e medicina dello sport devo passarti ad un mio collega.'
 
 **CRITICAL: You MUST call functions to answer questions. NEVER just say "I'm checking" without actually calling the function.**
 

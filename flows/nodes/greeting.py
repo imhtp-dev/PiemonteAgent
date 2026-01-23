@@ -24,7 +24,7 @@ Do NOT ask the user what they want - they already told you. Just acknowledge and
 Example response: "Perfetto, cerco subito i servizi disponibili per {initial_booking_request}."
 Then call the function. {settings.language_config}"""
     else:
-        task_content = f"""Say: 'Sono Voila, assistente virtuale di Cerba HealthCare. Quale servizio vorresti prenotare?'
+        task_content = f"""Say: 'Sono Ualà, assistente virtuale di Cerba HealthCare. Quale servizio vorresti prenotare?'
 
 When the user mentions ANY service name, immediately call search_health_services to search for it. {settings.language_config}"""
 
@@ -32,7 +32,7 @@ When the user mentions ANY service name, immediately call search_health_services
         name="greeting",
         role_messages=[{
             "role": "system",
-            "content": f"You are Voila, a calm and friendly virtual assistant (female voice) for Cerba Healthcare. Speak with warmth and clarity like a human, not like a robot. {settings.language_config}"
+            "content": f"You are Ualà, a calm and friendly virtual assistant (female voice) for Cerba Healthcare. Speak with warmth and clarity like a human, not like a robot. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",
