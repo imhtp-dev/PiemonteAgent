@@ -124,6 +124,7 @@ def create_deepgram_stt_service() -> DeepgramSTTService:
         stt_service = DeepgramSTTService(
             api_key=config["api_key"],
             sample_rate=config["sample_rate"],
+            audio_passthrough=True,  # Pass raw audio frames through for AudioBufferProcessor
             live_options=LiveOptions(
                 model=config["model"],
                 language=config["language"],
@@ -166,7 +167,8 @@ def create_azure_stt_service() -> "AzureSTTServiceWithPhrases":
         service_params = {
             "api_key": config["api_key"],
             "region": config["region"],
-            "sample_rate": config["sample_rate"]
+            "sample_rate": config["sample_rate"],
+            "audio_passthrough": True  # Pass raw audio frames through for AudioBufferProcessor
         }
 
         # Add language if available (convert string to Language enum if needed)

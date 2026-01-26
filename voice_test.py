@@ -87,6 +87,47 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.audio.vad.silero import SileroVADAnalyzer, VADParams
+from pipecat.processors.frame_processor import FrameDirection
+
+
+# ============================================================================
+# DEBUG AUDIO BUFFER PROCESSOR - Logs frame reception for debugging
+# ============================================================================
+
+class DebugAudioBufferProcessor:
+    """Wrapper around AudioBufferProcessor that logs frame reception for debugging."""
+
+    def __init__(self, processor):
+        self._processor = processor
+        self._input_frame_count = 0
+        self._output_frame_count = 0
+        # Store original process_frame
+        self._original_process_frame = processor.process_frame
+
+        # Monkey-patch process_frame to add logging
+        async def debug_process_frame(frame: Frame, direction: FrameDirection):
+            if isinstance(frame, InputAudioRawFrame):
+                self._input_frame_count += 1
+                if self._input_frame_count <= 5 or self._input_frame_count % 100 == 0:
+                    logger.debug(f"🎙️ [DEBUG] AudioBuffer received InputAudioRawFrame #{self._input_frame_count}: {len(frame.audio)} bytes")
+            elif isinstance(frame, OutputAudioRawFrame):
+                self._output_frame_count += 1
+                if self._output_frame_count <= 5 or self._output_frame_count % 100 == 0:
+                    logger.debug(f"🔊 [DEBUG] AudioBuffer received OutputAudioRawFrame #{self._output_frame_count}: {len(frame.audio)} bytes")
+            return await self._original_process_frame(frame, direction)
+
+        processor.process_frame = debug_process_frame
+
+    def log_buffer_status(self):
+        """Log current buffer sizes"""
+        user_size = len(self._processor._user_audio_buffer)
+        bot_size = len(self._processor._bot_audio_buffer)
+        logger.info(f"🎙️ [DEBUG] Buffer status - User: {user_size} bytes, Bot: {bot_size} bytes")
+        logger.info(f"🎙️ [DEBUG] Frame counts - Input: {self._input_frame_count}, Output: {self._output_frame_count}")
+
+    @property
+    def processor(self):
+        return self._processor
 
 # Daily transport imports
 from pipecat.transports.daily.transport import DailyParams, DailyTransport
@@ -176,6 +217,8 @@ class DailyHealthcareFlowTester:
         self.runner: Optional[PipelineRunner] = None
         self.flow_manager = None
         self.call_logger = None
+        self.recording_manager = None  # Audio recording manager (if enabled)
+        self.audiobuffer = None  # Audio buffer processor (if recording enabled)
         self.latency_tracker = LatencyTracker()  # For comparison with Gemini Live
 
         # Session info will be saved to the main log file created above
@@ -333,8 +376,47 @@ class DailyHealthcareFlowTester:
         # CREATE TRANSCRIPT PROCESSOR FOR RECORDING CONVERSATIONS (IDENTICAL TO BOT.PY)
         transcript_processor = TranscriptProcessor()
 
+        # CREATE AUDIO RECORDING (if enabled via RECORDING_ENABLED env var)
+        recording_enabled = os.getenv("RECORDING_ENABLED", "false").lower() == "true"
+        self.recording_manager = None
+        self.audiobuffer = None
+        self.debug_audiobuffer = None  # Debug wrapper
+        self.audio_data_received = None  # Event to signal when audio data is received
+
+        if recording_enabled:
+            from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
+            from services.recording_manager import RecordingManager
+
+            self.recording_manager = RecordingManager(self.session_id)
+            self.audio_data_received = asyncio.Event()  # Sync event for audio capture
+
+            # Create audio buffer - buffer entire call (buffer_size=0)
+            audiobuffer_processor = AudioBufferProcessor(
+                sample_rate=16000,
+                num_channels=2,  # Stereo for separate user/bot tracks
+                buffer_size=0,  # Buffer entire call
+            )
+
+            # Wrap with debug logging
+            self.debug_audiobuffer = DebugAudioBufferProcessor(audiobuffer_processor)
+            self.audiobuffer = audiobuffer_processor
+
+            @self.audiobuffer.event_handler("on_track_audio_data")
+            async def on_track_audio_data(buffer, user_audio, bot_audio, sample_rate, num_channels):
+                """Capture separate user and bot audio tracks"""
+                logger.info(f"🎙️ [DEBUG] on_track_audio_data triggered! User: {len(user_audio)} bytes, Bot: {len(bot_audio)} bytes")
+                self.recording_manager.add_user_audio(user_audio)
+                self.recording_manager.add_bot_audio(bot_audio)
+                # Signal that audio data has been received
+                self.audio_data_received.set()
+                logger.debug("🎙️ [DEBUG] audio_data_received event SET")
+
+            logger.info("🎙️ Audio recording ENABLED with debug logging (Daily test)")
+        else:
+            logger.info("🎙️ Audio recording DISABLED")
+
         # CREATE PIPELINE WITH TRANSCRIPT PROCESSORS AND IDLE HANDLING
-        pipeline = Pipeline([
+        pipeline_components = [
             self.transport.input(),
             stt,
             user_idle_processor,              # Add idle detection after STT (20s complete silence)
@@ -344,22 +426,34 @@ class DailyHealthcareFlowTester:
             processing_tracker,               # MOVED HERE: After LLM, can see LLM output frames
             tts,
             self.transport.output(),
+        ]
+
+        # AudioBufferProcessor MUST be AFTER transport.output() per official Pipecat docs
+        # See: _refs/pipecat/scripts/evals/eval.py lines 315-326
+        if self.audiobuffer:
+            pipeline_components.append(self.audiobuffer)
+
+        pipeline_components.extend([
             transcript_processor.assistant(), # Capture assistant responses
             context_aggregator.assistant()
         ])
+
+        pipeline = Pipeline(pipeline_components)
 
         logger.info("Healthcare Flow Pipeline structure:")
         logger.info("  1. Daily Input (WebRTC)")
         logger.info("  2. Deepgram STT")
         logger.info("  3. UserIdleProcessor - Handle transcription failures & 20s silence")
-        logger.info("  4. ProcessingTimeTracker - Speak if processing >3s")
-        logger.info("  5. TranscriptProcessor.user() - Capture user transcriptions")
-        logger.info("  6. Context Aggregator (User)")
-        logger.info("  7. OpenAI LLM (with flows + gender node termina→femmina correction)")
+        logger.info("  4. TranscriptProcessor.user() - Capture user transcriptions")
+        logger.info("  5. Context Aggregator (User)")
+        logger.info("  6. OpenAI LLM (with flows)")
+        logger.info("  7. ProcessingTimeTracker - Speak if processing >3s")
         logger.info("  8. ElevenLabs TTS")
         logger.info("  9. Daily Output (WebRTC)")
-        logger.info("  10. TranscriptProcessor.assistant() - Capture assistant responses")
-        logger.info("  11. Context Aggregator (Assistant)")
+        if self.audiobuffer:
+            logger.info("  10. AudioBufferProcessor - Capture user/bot audio")
+        logger.info(f"  {'11' if self.audiobuffer else '10'}. TranscriptProcessor.assistant() - Capture assistant responses")
+        logger.info(f"  {'12' if self.audiobuffer else '11'}. Context Aggregator (Assistant)")
 
         # Create pipeline task with extended idle timeout for API calls and OpenTelemetry tracing enabled
         self.task = PipelineTask(
@@ -465,6 +559,11 @@ class DailyHealthcareFlowTester:
             logger.info(f"✅ Call extractor initialized for Supabase storage")
             logger.info(f"⏱️ Call start time recorded: {call_extractor.started_at}")
 
+            # Start audio recording if enabled
+            if self.audiobuffer:
+                await self.audiobuffer.start_recording()
+                logger.info("🎙️ Audio recording started (Daily test)")
+
             # Initialize flow manager (IDENTICAL TO BOT.PY)
             try:
                 await initialize_flow_manager(self.flow_manager, self.start_node)
@@ -550,6 +649,46 @@ class DailyHealthcareFlowTester:
 
                         except Exception as e:
                             logger.error(f"❌ Failed to retrieve tokens from LangFuse: {e}")
+
+                    # Save recordings if enabled (BEFORE call_extractor.save_to_database)
+                    if self.recording_manager and self.audiobuffer:
+                        try:
+                            # Log buffer status BEFORE stop_recording
+                            if self.debug_audiobuffer:
+                                logger.info("🎙️ [DEBUG] Buffer status BEFORE stop_recording:")
+                                self.debug_audiobuffer.log_buffer_status()
+
+                            # Reset the event before stopping
+                            if self.audio_data_received:
+                                self.audio_data_received.clear()
+
+                            # Stop recording - triggers on_track_audio_data event
+                            await self.audiobuffer.stop_recording()
+
+                            # CRITICAL: Wait for the async event handler to complete
+                            # Pipecat's event dispatch is async and doesn't block stop_recording()
+                            if self.audio_data_received:
+                                logger.info("🎙️ [DEBUG] Waiting for on_track_audio_data event...")
+                                try:
+                                    await asyncio.wait_for(self.audio_data_received.wait(), timeout=2.0)
+                                    logger.info("🎙️ [DEBUG] on_track_audio_data event received!")
+                                except asyncio.TimeoutError:
+                                    logger.warning("🎙️ [DEBUG] Timeout waiting for on_track_audio_data (no audio captured?)")
+
+                            # Log buffer status AFTER stop_recording
+                            if self.debug_audiobuffer:
+                                logger.info("🎙️ [DEBUG] Buffer status AFTER stop_recording:")
+                                self.debug_audiobuffer.log_buffer_status()
+
+                            recording_urls = await self.recording_manager.save_recordings()
+                            if recording_urls:
+                                call_extractor.recording_url_stereo = recording_urls.get("stereo_url")
+                                call_extractor.recording_url_user = recording_urls.get("user_url")
+                                call_extractor.recording_url_bot = recording_urls.get("bot_url")
+                                call_extractor.recording_duration = self.recording_manager.get_duration_seconds()
+                                logger.success(f"🎙️ Recordings saved (Daily test) ({call_extractor.recording_duration:.1f}s)")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to save recordings (Daily test): {e}")
 
                     # Mark call end time and save to Supabase
                     call_extractor.end_call()

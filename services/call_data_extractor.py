@@ -126,6 +126,12 @@ class CallDataExtractor:
         self.caller_phone = None
         self.interaction_id = None
 
+        # Recording fields (populated by RecordingManager)
+        self.recording_url_stereo: Optional[str] = None
+        self.recording_url_user: Optional[str] = None
+        self.recording_url_bot: Optional[str] = None
+        self.recording_duration: Optional[float] = None
+
         logger.info(f"📊 Call data extractor initialized for session: {session_id}")
         logger.info(f"📞 Call ID: {self.call_id}")
     
@@ -845,6 +851,10 @@ TRANSCRIPT:
             if booking_data.get("patient_first_name"):
                 logger.info(f"   👤 Patient: {booking_data['patient_first_name']} {booking_data.get('patient_surname', '')}")
 
+            # Log recording data if present
+            if self.recording_url_stereo:
+                logger.info(f"   🎙️ Recording: {self.recording_duration:.1f}s" if self.recording_duration else "   🎙️ Recording: saved")
+
             # Prepare data for database/backup
             call_data = {
                 "call_id": self.call_id,
@@ -869,7 +879,7 @@ TRANSCRIPT:
                 **booking_data  # Include all booking fields
             }
 
-            # UPDATE database row with ALL fields (original + booking + call_type)
+            # UPDATE database row with ALL fields (original + booking + call_type + recordings)
             query = """
             UPDATE tb_stat SET
                 phone_number = $2,
@@ -911,6 +921,10 @@ TRANSCRIPT:
                 marketing_authorization = $38,
                 transfer_reason = $39,
                 transfer_timestamp = $40,
+                recording_url_stereo = $41,
+                recording_url_user = $42,
+                recording_url_bot = $43,
+                recording_duration_seconds = $44,
                 updated_at = CURRENT_TIMESTAMP
             WHERE call_id = $1
             """
@@ -957,7 +971,12 @@ TRANSCRIPT:
                 booking_data["reminder_authorization"],
                 booking_data["marketing_authorization"],
                 booking_data["transfer_reason"],
-                booking_data["transfer_timestamp"]
+                booking_data["transfer_timestamp"],
+                # Recording fields
+                self.recording_url_stereo,
+                self.recording_url_user,
+                self.recording_url_bot,
+                self.recording_duration
             )
 
             logger.success(f"✅ Call data updated in tb_stat table (with booking fields)")

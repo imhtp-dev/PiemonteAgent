@@ -437,8 +437,38 @@ async def websocket_endpoint(websocket: WebSocket):
         processing_tracker = create_processing_time_tracker()  # Reads from PROCESSING_TIME_THRESHOLD env var
         logger.info("🕐 ProcessingTimeTracker created (threshold from env - speaks if processing slow)")
 
+        # CREATE AUDIO RECORDING (if enabled via RECORDING_ENABLED env var)
+        recording_enabled = os.getenv("RECORDING_ENABLED", "false").lower() == "true"
+        recording_manager = None
+        audiobuffer = None
+
+        if recording_enabled:
+            from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
+            from services.recording_manager import RecordingManager
+
+            recording_manager = RecordingManager(session_id)
+
+            # Create audio buffer - buffer entire call (buffer_size=0)
+            audiobuffer = AudioBufferProcessor(
+                sample_rate=16000,
+                num_channels=2,  # Stereo for separate user/bot tracks
+                buffer_size=0,  # Buffer entire call
+            )
+
+            @audiobuffer.event_handler("on_track_audio_data")
+            async def on_track_audio_data(buffer, user_audio, bot_audio, sample_rate, num_channels):
+                """Capture separate user and bot audio tracks"""
+                recording_manager.add_user_audio(user_audio)
+                recording_manager.add_bot_audio(bot_audio)
+
+            logger.info("🎙️ Audio recording ENABLED")
+        else:
+            logger.info("🎙️ Audio recording DISABLED")
+
         # CREATE PIPELINE WITH TRANSCRIPT PROCESSORS AND IDLE HANDLING
-        pipeline = Pipeline([
+        # AudioBufferProcessor MUST be BEFORE transport.output() to capture OutputAudioRawFrame (bot audio)
+        # transport.output() consumes OutputAudioRawFrame, but passes InputAudioRawFrame (SystemFrame) through
+        pipeline_components = [
             transport.input(),
             stt,
             user_idle_processor,                      # Add idle detection after STT (20s complete silence)
@@ -447,10 +477,18 @@ async def websocket_endpoint(websocket: WebSocket):
             llm,
             processing_tracker,                       # MOVED HERE: After LLM, can see LLM output frames
             tts,
+        ]
+
+        if audiobuffer:
+            pipeline_components.append(audiobuffer)  # Capture audio BEFORE transport.output()
+
+        pipeline_components.extend([
             transport.output(),
             transcript_processor.assistant(),         # Capture assistant responses
             context_aggregator.assistant()
         ])
+
+        pipeline = Pipeline(pipeline_components)
 
         logger.info("Healthcare Flow Pipeline structure:")
         logger.info("  1. Input (PCM from bridge)")
@@ -462,8 +500,13 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info("  7. OpenAI LLM (with flows + gender node termina→femmina correction)")
         logger.info("  8. ElevenLabs TTS")
         logger.info("  9. Output (PCM to bridge)")
-        logger.info("  10. TranscriptProcessor.assistant() - Capture assistant responses")
-        logger.info("  11. Context Aggregator (Assistant)")
+        if audiobuffer:
+            logger.info("  10. AudioBufferProcessor - Record user/bot audio")
+            logger.info("  11. TranscriptProcessor.assistant() - Capture assistant responses")
+            logger.info("  12. Context Aggregator (Assistant)")
+        else:
+            logger.info("  10. TranscriptProcessor.assistant() - Capture assistant responses")
+            logger.info("  11. Context Aggregator (Assistant)")
 
         # START PER-CALL LOGGING (create individual logger instance)
         from services.call_logger import CallLogger
@@ -591,6 +634,11 @@ async def websocket_endpoint(websocket: WebSocket):
             logger.info(f"📊 Call extractor initialized and started (capturing all messages)")
             logger.info(f"⏱️ Call start time recorded: {call_extractor.started_at}")
 
+            # Start audio recording if enabled
+            if audiobuffer:
+                await audiobuffer.start_recording()
+                logger.info("🎙️ Audio recording started")
+
             # Initialize flow manager
             try:
                 await initialize_flow_manager(flow_manager, start_node)
@@ -612,6 +660,21 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 call_extractor = flow_manager.state.get("call_extractor")
                 if call_extractor:
+                    # Save recordings if enabled (BEFORE call_extractor.save_to_database)
+                    if recording_manager and audiobuffer:
+                        try:
+                            # Stop recording first to flush buffered audio to RecordingManager
+                            await audiobuffer.stop_recording()
+                            recording_urls = await recording_manager.save_recordings()
+                            if recording_urls:
+                                call_extractor.recording_url_stereo = recording_urls.get("stereo_url")
+                                call_extractor.recording_url_user = recording_urls.get("user_url")
+                                call_extractor.recording_url_bot = recording_urls.get("bot_url")
+                                call_extractor.recording_duration = recording_manager.get_duration_seconds()
+                                logger.success(f"🎙️ Recordings saved ({call_extractor.recording_duration:.1f}s)")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to save recordings: {e}")
+
                     # ✅ CRITICAL: Mark call end time before saving
                     call_extractor.end_call()
                     success = await call_extractor.save_to_database(flow_manager.state)
@@ -653,6 +716,21 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 call_extractor = flow_manager.state.get("call_extractor")
                 if call_extractor:
+                    # Save recordings if enabled (BEFORE call_extractor.save_to_database)
+                    if recording_manager and audiobuffer:
+                        try:
+                            # Stop recording first to flush buffered audio to RecordingManager
+                            await audiobuffer.stop_recording()
+                            recording_urls = await recording_manager.save_recordings()
+                            if recording_urls:
+                                call_extractor.recording_url_stereo = recording_urls.get("stereo_url")
+                                call_extractor.recording_url_user = recording_urls.get("user_url")
+                                call_extractor.recording_url_bot = recording_urls.get("bot_url")
+                                call_extractor.recording_duration = recording_manager.get_duration_seconds()
+                                logger.success(f"🎙️ Recordings saved (timeout) ({call_extractor.recording_duration:.1f}s)")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to save recordings (timeout): {e}")
+
                     # ✅ CRITICAL: Mark call end time before saving
                     call_extractor.end_call()
                     success = await call_extractor.save_to_database(flow_manager.state)
@@ -785,6 +863,21 @@ async def websocket_endpoint(websocket: WebSocket):
                     except Exception as e:
                         logger.error(f"❌ Failed to retrieve tokens from LangFuse: {e}")
                         # Continue with save even if LangFuse query fails
+
+                # Save recordings if enabled (BEFORE call_extractor.save_to_database)
+                if recording_manager and audiobuffer:
+                    try:
+                        # Stop recording first to flush buffered audio to RecordingManager
+                        await audiobuffer.stop_recording()
+                        recording_urls = await recording_manager.save_recordings()
+                        if recording_urls:
+                            call_extractor.recording_url_stereo = recording_urls.get("stereo_url")
+                            call_extractor.recording_url_user = recording_urls.get("user_url")
+                            call_extractor.recording_url_bot = recording_urls.get("bot_url")
+                            call_extractor.recording_duration = recording_manager.get_duration_seconds()
+                            logger.success(f"🎙️ [FINALLY] Recordings saved ({call_extractor.recording_duration:.1f}s)")
+                    except Exception as e:
+                        logger.error(f"❌ [FINALLY] Failed to save recordings: {e}")
 
                 # ✅ CRITICAL: Mark call end time before saving
                 call_extractor.end_call()

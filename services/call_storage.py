@@ -5,9 +5,9 @@ Azure Storage service for storing call data, transcripts, and fiscal codes
 import os
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
-from azure.storage.blob import BlobServiceClient
+from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
 from azure.core.exceptions import AzureError
 from loguru import logger
 
@@ -23,6 +23,15 @@ class CallDataStorage:
             self.blob_service = BlobServiceClient.from_connection_string(self.connection_string)
             self.container_name = "call-data"
 
+            # Parse connection string for SAS generation
+            self.account_name = None
+            self.account_key = None
+            for part in self.connection_string.split(";"):
+                if part.startswith("AccountName="):
+                    self.account_name = part.split("=", 1)[1]
+                elif part.startswith("AccountKey="):
+                    self.account_key = part.split("=", 1)[1]
+
             # Blob prefix for separating different agents (e.g., "piemonte/")
             # Lombardy uses empty prefix, Piemonte uses "piemonte/"
             self.blob_prefix = os.getenv("AZURE_BLOB_PREFIX", "")
@@ -37,6 +46,34 @@ class CallDataStorage:
         except Exception as e:
             logger.error(f"❌ Failed to initialize Azure Storage: {e}")
             raise
+
+    def _generate_sas_url(self, blob_name: str, expiry_days: int = 365) -> str:
+        """
+        Generate a SAS URL for private blob access
+
+        Args:
+            blob_name: The blob path within the container
+            expiry_days: How long the URL should be valid (default 1 year)
+
+        Returns:
+            str: Full URL with SAS token for accessing the blob
+        """
+        if not self.account_name or not self.account_key:
+            logger.warning("⚠️ Cannot generate SAS URL - missing account credentials")
+            # Fallback to plain URL (won't work for private containers)
+            return f"https://{self.account_name}.blob.core.windows.net/{self.container_name}/{blob_name}"
+
+        sas_token = generate_blob_sas(
+            account_name=self.account_name,
+            container_name=self.container_name,
+            blob_name=blob_name,
+            account_key=self.account_key,
+            permission=BlobSasPermissions(read=True),
+            expiry=datetime.utcnow() + timedelta(days=expiry_days)
+        )
+
+        sas_url = f"https://{self.account_name}.blob.core.windows.net/{self.container_name}/{blob_name}?{sas_token}"
+        return sas_url
 
     def _ensure_container_exists(self):
         """Create container if it doesn't exist"""
@@ -313,6 +350,66 @@ class CallDataStorage:
         except Exception as e:
             logger.error(f"❌ Failed to retrieve caller phone: {e}")
             return None
+
+    async def upload_recording(
+        self,
+        session_id: str,
+        audio_bytes: bytes,
+        track_type: str,
+        sample_rate: int = 16000,
+        num_channels: int = 1
+    ) -> str:
+        """
+        Upload WAV recording to Azure Blob Storage
+
+        Args:
+            session_id: Session identifier
+            audio_bytes: Raw PCM audio bytes
+            track_type: "user", "bot", or "stereo"
+            sample_rate: Audio sample rate (default 16000)
+            num_channels: 1 for mono, 2 for stereo
+
+        Returns:
+            str: SAS URL for the uploaded recording (valid for 1 year)
+        """
+        import wave
+        import io
+
+        date_folder = datetime.now().strftime("%Y-%m-%d")
+        blob_name = f"{self.blob_prefix}recordings/{date_folder}/{session_id}_{track_type}.wav"
+
+        # Create WAV file in memory
+        wav_buffer = io.BytesIO()
+        with wave.open(wav_buffer, 'wb') as wf:
+            wf.setnchannels(num_channels)
+            wf.setsampwidth(2)  # 16-bit
+            wf.setframerate(sample_rate)
+            wf.writeframes(audio_bytes)
+
+        wav_buffer.seek(0)
+
+        blob_client = self.blob_service.get_blob_client(
+            container=self.container_name,
+            blob=blob_name
+        )
+
+        blob_client.upload_blob(
+            wav_buffer.getvalue(),
+            overwrite=True,
+            metadata={
+                "session_id": session_id,
+                "track_type": track_type,
+                "sample_rate": str(sample_rate),
+                "num_channels": str(num_channels),
+                "type": "recording"
+            }
+        )
+
+        # Generate SAS URL for private container access (valid 1 year)
+        sas_url = self._generate_sas_url(blob_name, expiry_days=365)
+        logger.info(f"🎙️ Recording uploaded: {blob_name}")
+        logger.debug(f"🔗 SAS URL generated (expires in 365 days)")
+        return sas_url
 
     async def _upload_text_content(self, blob_path: str, text_content: str) -> bool:
         """
