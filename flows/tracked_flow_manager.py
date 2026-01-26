@@ -183,9 +183,15 @@ class TrackedFlowManager(FlowManager):
                         from flows.nodes.transfer import create_transfer_node
                         return result_dict, create_transfer_node()
             else:
-                # Success - reset failure counter
-                FailureTracker.reset(self.state)
-                span.set_attribute("handler.outcome", "success")
+                # Success - reset failure counter UNLESS pending_transfer
+                # pending_transfer means user requested transfer but we're asking what they need
+                # We don't want to reset the transfer_requested flag in that case
+                if result_dict.get("pending_transfer"):
+                    logger.debug("⏸️ Pending transfer - not resetting failure tracker")
+                    span.set_attribute("handler.outcome", "success_pending_transfer")
+                else:
+                    FailureTracker.reset(self.state)
+                    span.set_attribute("handler.outcome", "success")
 
             # Add next node info to span
             if next_node:
