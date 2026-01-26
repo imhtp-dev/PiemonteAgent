@@ -441,12 +441,14 @@ async def websocket_endpoint(websocket: WebSocket):
         recording_enabled = os.getenv("RECORDING_ENABLED", "false").lower() == "true"
         recording_manager = None
         audiobuffer = None
+        audio_data_received = None  # Event to signal when audio data is received
 
         if recording_enabled:
             from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
             from services.recording_manager import RecordingManager
 
             recording_manager = RecordingManager(session_id)
+            audio_data_received = asyncio.Event()  # Sync event for audio capture
 
             # Create audio buffer - buffer entire call (buffer_size=0)
             audiobuffer = AudioBufferProcessor(
@@ -460,14 +462,14 @@ async def websocket_endpoint(websocket: WebSocket):
                 """Capture separate user and bot audio tracks"""
                 recording_manager.add_user_audio(user_audio)
                 recording_manager.add_bot_audio(bot_audio)
+                # Signal that audio data has been received
+                audio_data_received.set()
 
             logger.info("🎙️ Audio recording ENABLED")
         else:
             logger.info("🎙️ Audio recording DISABLED")
 
         # CREATE PIPELINE WITH TRANSCRIPT PROCESSORS AND IDLE HANDLING
-        # AudioBufferProcessor MUST be BEFORE transport.output() to capture OutputAudioRawFrame (bot audio)
-        # transport.output() consumes OutputAudioRawFrame, but passes InputAudioRawFrame (SystemFrame) through
         pipeline_components = [
             transport.input(),
             stt,
@@ -477,13 +479,15 @@ async def websocket_endpoint(websocket: WebSocket):
             llm,
             processing_tracker,                       # MOVED HERE: After LLM, can see LLM output frames
             tts,
+            transport.output(),
         ]
 
+        # AudioBufferProcessor MUST be AFTER transport.output() per official Pipecat docs
+        # See: _refs/pipecat/scripts/evals/eval.py lines 315-326
         if audiobuffer:
-            pipeline_components.append(audiobuffer)  # Capture audio BEFORE transport.output()
+            pipeline_components.append(audiobuffer)
 
         pipeline_components.extend([
-            transport.output(),
             transcript_processor.assistant(),         # Capture assistant responses
             context_aggregator.assistant()
         ])
@@ -494,19 +498,16 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info("  1. Input (PCM from bridge)")
         logger.info("  2. Deepgram STT")
         logger.info("  3. UserIdleProcessor - Handle transcription failures & 20s silence")
-        logger.info("  4. ProcessingTimeTracker - Speak if processing >3s")
-        logger.info("  5. TranscriptProcessor.user() - Capture user transcriptions")
-        logger.info("  6. Context Aggregator (User)")
-        logger.info("  7. OpenAI LLM (with flows + gender node termina→femmina correction)")
+        logger.info("  4. TranscriptProcessor.user() - Capture user transcriptions")
+        logger.info("  5. Context Aggregator (User)")
+        logger.info("  6. OpenAI LLM (with flows)")
+        logger.info("  7. ProcessingTimeTracker - Speak if processing >3s")
         logger.info("  8. ElevenLabs TTS")
         logger.info("  9. Output (PCM to bridge)")
         if audiobuffer:
-            logger.info("  10. AudioBufferProcessor - Record user/bot audio")
-            logger.info("  11. TranscriptProcessor.assistant() - Capture assistant responses")
-            logger.info("  12. Context Aggregator (Assistant)")
-        else:
-            logger.info("  10. TranscriptProcessor.assistant() - Capture assistant responses")
-            logger.info("  11. Context Aggregator (Assistant)")
+            logger.info("  10. AudioBufferProcessor - Capture user/bot audio")
+        logger.info(f"  {'11' if audiobuffer else '10'}. TranscriptProcessor.assistant() - Capture assistant responses")
+        logger.info(f"  {'12' if audiobuffer else '11'}. Context Aggregator (Assistant)")
 
         # START PER-CALL LOGGING (create individual logger instance)
         from services.call_logger import CallLogger
@@ -663,8 +664,20 @@ async def websocket_endpoint(websocket: WebSocket):
                     # Save recordings if enabled (BEFORE call_extractor.save_to_database)
                     if recording_manager and audiobuffer:
                         try:
-                            # Stop recording first to flush buffered audio to RecordingManager
+                            # Reset event before stopping
+                            if audio_data_received:
+                                audio_data_received.clear()
+
+                            # Stop recording - triggers on_track_audio_data event
                             await audiobuffer.stop_recording()
+
+                            # CRITICAL: Wait for async event handler to complete
+                            if audio_data_received:
+                                try:
+                                    await asyncio.wait_for(audio_data_received.wait(), timeout=2.0)
+                                except asyncio.TimeoutError:
+                                    logger.warning("🎙️ Timeout waiting for audio data (no audio captured?)")
+
                             recording_urls = await recording_manager.save_recordings()
                             if recording_urls:
                                 call_extractor.recording_url_stereo = recording_urls.get("stereo_url")
@@ -719,8 +732,20 @@ async def websocket_endpoint(websocket: WebSocket):
                     # Save recordings if enabled (BEFORE call_extractor.save_to_database)
                     if recording_manager and audiobuffer:
                         try:
-                            # Stop recording first to flush buffered audio to RecordingManager
+                            # Reset event before stopping
+                            if audio_data_received:
+                                audio_data_received.clear()
+
+                            # Stop recording - triggers on_track_audio_data event
                             await audiobuffer.stop_recording()
+
+                            # CRITICAL: Wait for async event handler to complete
+                            if audio_data_received:
+                                try:
+                                    await asyncio.wait_for(audio_data_received.wait(), timeout=2.0)
+                                except asyncio.TimeoutError:
+                                    logger.warning("🎙️ Timeout waiting for audio data (timeout handler)")
+
                             recording_urls = await recording_manager.save_recordings()
                             if recording_urls:
                                 call_extractor.recording_url_stereo = recording_urls.get("stereo_url")
@@ -867,8 +892,20 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Save recordings if enabled (BEFORE call_extractor.save_to_database)
                 if recording_manager and audiobuffer:
                     try:
-                        # Stop recording first to flush buffered audio to RecordingManager
+                        # Reset event before stopping
+                        if audio_data_received:
+                            audio_data_received.clear()
+
+                        # Stop recording - triggers on_track_audio_data event
                         await audiobuffer.stop_recording()
+
+                        # CRITICAL: Wait for async event handler to complete
+                        if audio_data_received:
+                            try:
+                                await asyncio.wait_for(audio_data_received.wait(), timeout=2.0)
+                            except asyncio.TimeoutError:
+                                logger.warning("🎙️ Timeout waiting for audio data (finally handler)")
+
                         recording_urls = await recording_manager.save_recordings()
                         if recording_urls:
                             call_extractor.recording_url_stereo = recording_urls.get("stereo_url")
