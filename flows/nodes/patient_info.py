@@ -129,7 +129,7 @@ When user responds, call verify_basic_info: confirms → action="confirm", chang
         }],
         task_messages=[{
             "role": "system",
-            "content": f"""Say EXACTLY this (one natural sentence, no lists): "Ricapitoliamo le informazioni. Il tuo sesso è {gender_italian}, la tua data di nascita è {dob_italian}, e il tuo indirizzo è {address}. È tutto corretto? Dimmi di sì oppure cosa devo modificare." """
+            "content": f"""Say EXACTLY this (one natural sentence, no lists): "Ricapitoliamo le informazioni che mi hai fornito. Il sesso che hai indicato è {gender_italian}, la data di nascita è {dob_italian}, e l'indirizzo è {address}. È tutto corretto? Dimmi di sì oppure cosa devo modificare." """
         }],
         functions=[
             FlowsFunctionSchema(

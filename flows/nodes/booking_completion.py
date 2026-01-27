@@ -73,17 +73,12 @@ def create_booking_success_final_node(booking_info: Dict, selected_services: Lis
 
     task_content = f"""🎉 Excellent! Your booking has been created successfully!
 
-**Booking Details:**
-• Booking Code: **{booking_code}**
-• Booking ID: {booking_uuid}
-• Created: {created_date}
-
 **Your Appointments:**
 {chr(10).join(slots_details)}
 
 **Total Cost: {int(total_price)} euro**
 
-You will receive a confirmation email with all the details. Thank you for choosing Cerba Healthcare!
+You will receive a confirmation SMS on your phone number with all the details. Thank you for choosing Cerba Healthcare!
 
 Is there anything else I can help you with today?"""
 

@@ -128,11 +128,11 @@ def create_collect_reminder_authorization_node() -> NodeConfig:
         name="collect_reminder_authorization",
         role_messages=[{
             "role": "system",
-            "content": f"Ask if the patient wants to receive email reminders for their appointment. Wait for their explicit response before calling the function. Only call the function when they clearly say yes/no or similar. {settings.language_config}"
+            "content": f"Ask if the patient wants to receive SMS reminders for their appointment. Wait for their explicit response before calling the function. Only call the function when they clearly say yes/no or similar. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",
-            "content": "Would you like to receive an email reminder for your scheduled appointment? Please say 'yes' or 'no'."
+            "content": "Would you like to receive an SMS reminder for your scheduled appointment? Please say 'yes' or 'no'."
         }],
         functions=[
             FlowsFunctionSchema(
