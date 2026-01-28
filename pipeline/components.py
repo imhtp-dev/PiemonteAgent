@@ -6,7 +6,11 @@ from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from pipecat.processors.aggregators.llm_response_universal import (
+    LLMContextAggregatorPair,
+    LLMUserAggregatorParams,
+)
+from pipecat.turns.user_mute import FunctionCallUserMuteStrategy, AlwaysUserMuteStrategy, MuteUntilFirstBotCompleteUserMuteStrategy
 from pipecat.frames.frames import StartFrame
 from deepgram import LiveOptions
 from loguru import logger
@@ -232,5 +236,18 @@ def create_llm_service() -> OpenAILLMService:
 
 
 def create_context_aggregator(llm_service: OpenAILLMService) -> LLMContextAggregatorPair:
-    """Create context aggregator for the LLM using universal LLMContext"""
-    return LLMContextAggregatorPair(LLMContext())
+    """Create context aggregator for the LLM using universal LLMContext
+
+    Includes FunctionCallUserMuteStrategy to prevent user interruptions
+    during function/tool call execution (e.g., slot search, booking API calls).
+    """
+    return LLMContextAggregatorPair(
+        LLMContext(),
+        user_params=LLMUserAggregatorParams(
+            user_mute_strategies=[
+                MuteUntilFirstBotCompleteUserMuteStrategy(),  # Mute until first greeting is complete
+                AlwaysUserMuteStrategy(),        # Mute user input while bot is speaking (prevents TTS interruption)
+                FunctionCallUserMuteStrategy(),  # Mute user input during function calls
+            ],
+        ),
+    )
