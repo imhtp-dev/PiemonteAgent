@@ -286,16 +286,7 @@ async def confirm_details_and_create_booking(args: FlowArgs, flow_manager: FlowM
     patient_phone = flow_manager.state.get("patient_phone", "")
     patient_email = flow_manager.state.get("patient_email", "")
 
-    # FISCAL CODE LOGIC: Use DB fiscal code if patient exists, otherwise hardcode
     patient_found_in_db = flow_manager.state.get("patient_found_in_db", False)
-    if patient_found_in_db:
-        # Use fiscal code from database
-        patient_fiscal_code = flow_manager.state.get("generated_fiscal_code", "NWTSCI80A01F205A")
-        logger.info(f"✅ Using fiscal code from database: {patient_fiscal_code}")
-    else:
-        # New patient - use hardcoded fiscal code
-        patient_fiscal_code = "NWTSCI80A01F205A"
-        logger.info(f"🔧 Using hardcoded fiscal code for new patient: {patient_fiscal_code}")
 
     # Use separate first name and surname for API
     patient_name = patient_first_name
@@ -306,7 +297,6 @@ async def confirm_details_and_create_booking(args: FlowArgs, flow_manager: FlowM
     logger.info(f"🔍 DEBUG: patient_surname (for API) = '{patient_surname}'")
     logger.info(f"🔍 DEBUG: patient_phone = '{patient_phone}'")
     logger.info(f"🔍 DEBUG: patient_email = '{patient_email}'")
-    logger.info(f"🔍 DEBUG: patient_fiscal_code = '{patient_fiscal_code}'")
 
     # Also check for patient data from test setup
     patient_data_dict = flow_manager.state.get("patient_data", {})
@@ -330,8 +320,7 @@ async def confirm_details_and_create_booking(args: FlowArgs, flow_manager: FlowM
         "booked_slots": bool(booked_slots),
         "patient_name": bool(patient_name),
         "patient_surname": bool(patient_surname),
-        "patient_phone": bool(patient_phone),
-        "patient_fiscal_code": bool(patient_fiscal_code)
+        "patient_phone": bool(patient_phone)
     }
 
     logger.info(f"🔍 DEBUG: Validation results: {validation_results}")
@@ -352,11 +341,9 @@ async def confirm_details_and_create_booking(args: FlowArgs, flow_manager: FlowM
                 logger.error(f"❌ {field}: '{patient_surname}'")
             elif field == "patient_phone":
                 logger.error(f"❌ {field}: '{patient_phone}'")
-            elif field == "patient_fiscal_code":
-                logger.error(f"❌ {field}: '{patient_fiscal_code}'")
 
     if not all([selected_services, booked_slots, patient_name, patient_surname,
-                patient_phone, patient_fiscal_code]):
+                patient_phone]):
         logger.error("❌ FINAL VALIDATION FAILED - Creating error node")
         from flows.nodes.completion import create_error_node
         return {
@@ -375,7 +362,6 @@ async def confirm_details_and_create_booking(args: FlowArgs, flow_manager: FlowM
             "patient_surname": patient_surname,
             "patient_phone": patient_phone,
             "patient_email": patient_email,
-            "patient_fiscal_code": patient_fiscal_code,
             "patient_gender": patient_gender,
             "patient_dob": patient_dob,
             "reminder_auth": reminder_auth,
@@ -432,7 +418,6 @@ async def perform_booking_creation_and_transition(args: FlowArgs, flow_manager: 
         patient_surname = params["patient_surname"]
         patient_phone = params["patient_phone"]
         patient_email = params["patient_email"]
-        patient_fiscal_code = params["patient_fiscal_code"]
         patient_gender = params["patient_gender"]
         patient_dob = params["patient_dob"]
         reminder_auth = params["reminder_auth"]
@@ -448,7 +433,6 @@ async def perform_booking_creation_and_transition(args: FlowArgs, flow_manager: 
         logger.info(f"   - patient_surname: '{patient_surname}'")
         logger.info(f"   - patient_phone: '{patient_phone}'")
         logger.info(f"   - patient_email: '{patient_email}'")
-        logger.info(f"   - patient_fiscal_code: '{patient_fiscal_code}'")
         logger.info(f"   - patient_gender: '{patient_gender}'")
         logger.info(f"   - patient_dob: '{patient_dob}'")
         logger.info(f"   - reminder_auth: {reminder_auth}")
@@ -473,7 +457,6 @@ async def perform_booking_creation_and_transition(args: FlowArgs, flow_manager: 
                 "email": patient_email,
                 "phone": patient_phone,
                 "date_of_birth": patient_dob,
-                "fiscal_code": patient_fiscal_code,
                 "gender": patient_gender.upper()
             }
             logger.info("📝 Creating booking for new patient with full details")

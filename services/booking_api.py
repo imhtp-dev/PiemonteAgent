@@ -226,7 +226,7 @@ def validate_booking_data(booking_data: Dict[str, Any]) -> Dict[str, Any]:
         else:
             # Validate all required patient fields for new patients
             # Note: email is nullable per Cerba API docs - not required
-            required_patient_fields = ["name", "surname", "phone", "date_of_birth", "fiscal_code", "gender"]
+            required_patient_fields = ["name", "surname", "phone", "date_of_birth", "gender"]
 
             for field in required_patient_fields:
                 if not patient.get(field):
