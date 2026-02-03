@@ -533,13 +533,11 @@ async def update_trace_io(
     input_text: str,
     output_text: str,
     call_type: str = "call",
-    caller_phone: str = None
+    caller_phone: str = None,
+    metadata: dict = None
 ) -> bool:
     """
-    Update a LangFuse trace with input/output and meaningful name.
-
-    This is a reliable way to add Input/Output to traces AFTER the call ends,
-    using the transcript data that was collected during the conversation.
+    Update a LangFuse trace with input/output, name, and call metadata.
 
     Also sets a meaningful trace name for easy identification in LangFuse:
     Format: "{call_type} | {session_id[:8]} | {phone_last4}"
@@ -550,6 +548,7 @@ async def update_trace_io(
         output_text: Last assistant response (shown in LangFuse Output field)
         call_type: Type of call - "booking", "info", "transfer" (for trace name)
         caller_phone: Caller phone number (last 4 digits shown in trace name)
+        metadata: Optional dict with call enrichment data (outcome, cost, nodes, etc.)
 
     Returns:
         True if update successful, False otherwise
@@ -570,7 +569,8 @@ async def update_trace_io(
             input_text,
             output_text,
             call_type,
-            caller_phone
+            caller_phone,
+            metadata
         )
 
         return success
@@ -585,16 +585,17 @@ def _update_trace_io_sync(
     input_text: str,
     output_text: str,
     call_type: str = "call",
-    caller_phone: str = None
+    caller_phone: str = None,
+    metadata: dict = None
 ) -> bool:
     """
-    Update trace I/O and name via LangFuse Ingestion API (upsert).
-
-    LangFuse V3 API has no PATCH endpoint for traces. Instead, we use the
-    ingestion batch API to "upsert" the trace with new data.
+    Update trace I/O, name, tags, and metadata via LangFuse Ingestion API (upsert).
 
     Sets trace name format: "{call_type} | {session_id[:8]} | {phone_last4}"
     Example: "booking | abc12345 | *7890"
+
+    Metadata can include: outcome, last_node, node_history, failure_count,
+    cost breakdown, duration, etc.
     """
     try:
         from langfuse.api.resources.ingestion.types import TraceBody, IngestionEvent_TraceCreate
@@ -620,12 +621,27 @@ def _update_trace_io_sync(
         phone_suffix = f"*{caller_phone[-4:]}" if caller_phone and len(caller_phone) >= 4 else "unknown"
         trace_name = f"{call_type} | {session_id[:8]} | {phone_suffix}"
 
-        # Build TraceBody for upsert (only include fields we want to update)
+        # Build tags from call type and outcome
+        tags = [call_type]
+        if metadata:
+            outcome = metadata.get("outcome")
+            if outcome:
+                tags.append(outcome)
+            last_node = metadata.get("last_node")
+            if last_node:
+                tags.append(f"node:{last_node}")
+            stt_provider = metadata.get("stt_provider")
+            if stt_provider:
+                tags.append(f"stt:{stt_provider}")
+
+        # Build TraceBody for upsert
         body = TraceBody(
             id=trace_id,
             name=trace_name,
             input=input_text[:1000] if input_text else None,
-            output=output_text[:1000] if output_text else None
+            output=output_text[:1000] if output_text else None,
+            tags=tags,
+            metadata=metadata,
         )
 
         # Create ingestion event
@@ -637,9 +653,11 @@ def _update_trace_io_sync(
         response = client.api.ingestion.batch(batch=[event])
         logger.info(f"📤 Ingestion response: {response}")
 
-        logger.success(f"✅ Updated trace {trace_id}: name='{trace_name}'")
-        logger.debug(f"   Input: {input_text[:100] if input_text else 'None'}...")
-        logger.debug(f"   Output: {output_text[:100] if output_text else 'None'}...")
+        logger.success(f"✅ Updated trace {trace_id}: name='{trace_name}' tags={tags}")
+        if metadata:
+            cost_total = metadata.get("cost_total_usd")
+            if cost_total is not None:
+                logger.info(f"💰 Cost attached: ${cost_total:.4f} (${metadata.get('cost_per_minute_usd', 0):.4f}/min)")
 
         return True
 

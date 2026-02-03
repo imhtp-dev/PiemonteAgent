@@ -195,7 +195,10 @@ def create_azure_stt_service() -> "AzureSTTServiceWithPhrases":
 
         stt_service = AzureSTTServiceWithPhrases(**service_params)
 
-        # ADD SUCCESS LOG
+        # Set model_name so Pipecat's @traced_stt reports it to LangFuse
+        # (Azure STT doesn't set this by default, causing "unknown" in dashboard)
+        stt_service.model_name = "azure-stt"
+
         logger.success("✅ Azure STT service with phrase list created successfully")
         return stt_service
 

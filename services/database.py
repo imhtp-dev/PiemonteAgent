@@ -7,6 +7,7 @@ import os
 import asyncpg
 from typing import Optional, List, Dict, Any
 from loguru import logger
+from utils.tracing import trace_api_call
 
 
 class Database:
@@ -61,6 +62,7 @@ class Database:
             await self.pool.close()
             logger.info("✅ PostgreSQL connection pool closed")
     
+    @trace_api_call("db.execute", add_args=False)
     async def execute(self, query: str, *args) -> str:
         """
         Execute a query that modifies data (INSERT, UPDATE, DELETE)
@@ -81,6 +83,7 @@ class Database:
                 logger.error(f"   Args: {args}")
                 raise
     
+    @trace_api_call("db.fetch", add_args=False)
     async def fetch(self, query: str, *args) -> List[Dict[str, Any]]:
         """
         Fetch multiple rows
@@ -100,6 +103,7 @@ class Database:
                 logger.error(f"   Args: {args}")
                 raise
     
+    @trace_api_call("db.fetchrow", add_args=False)
     async def fetchrow(self, query: str, *args) -> Optional[Dict[str, Any]]:
         """
         Fetch a single row

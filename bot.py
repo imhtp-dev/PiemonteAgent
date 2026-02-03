@@ -875,12 +875,38 @@ async def websocket_endpoint(websocket: WebSocket):
                             caller_phone = flow_state.get("caller_phone_from_talkdesk", "")
 
                             if first_user_msg or last_assistant_msg:
+                                # Build enrichment metadata for LangFuse trace
+                                trace_metadata = {
+                                    "outcome": call_type,
+                                    "last_node": flow_state.get("current_node", "unknown"),
+                                    "node_history": flow_state.get("node_history", []),
+                                    "failure_count": flow_state.get("failure_tracker", {}).get("count", 0),
+                                    "duration_seconds": round(call_extractor._calculate_duration() or 0, 1),
+                                    "stt_provider": settings.stt_provider,
+                                    "llm_total_tokens": token_data.get("total_tokens", 0),
+                                }
+
+                                # Calculate cost breakdown
+                                try:
+                                    from utils.cost_tracker import calculate_call_cost
+                                    cost = calculate_call_cost(
+                                        llm_input_tokens=token_data.get("prompt_tokens", 0),
+                                        llm_output_tokens=token_data.get("completion_tokens", 0),
+                                        tts_characters=0,  # TODO: aggregate from TTS spans
+                                        call_duration_seconds=trace_metadata["duration_seconds"],
+                                        stt_provider=settings.stt_provider,
+                                    )
+                                    trace_metadata.update(cost.to_dict())
+                                except Exception as cost_err:
+                                    logger.warning(f"⚠️ Cost calculation failed: {cost_err}")
+
                                 await update_trace_io(
                                     session_id,
                                     first_user_msg or "",
                                     last_assistant_msg or "",
                                     call_type=call_type,
-                                    caller_phone=caller_phone
+                                    caller_phone=caller_phone,
+                                    metadata=trace_metadata
                                 )
                         except Exception as io_err:
                             logger.error(f"❌ Failed to update trace I/O: {io_err}")

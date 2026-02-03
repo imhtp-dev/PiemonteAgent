@@ -16,6 +16,7 @@ from loguru import logger
 from openai import AsyncOpenAI
 from config.settings import settings
 from services.database import db
+from utils.tracing import trace_api_call
 
 # Valid enum values for call categorization
 VALID_ESITO_CHIAMATA = ["COMPLETATA", "TRASFERITA", "NON COMPLETATA"]
@@ -342,6 +343,7 @@ class CallDataExtractor:
         
         return "\n".join(lines)
     
+    @trace_api_call("llm.call_analysis", add_args=False)
     async def _analyze_call_with_llm(self, transcript_text: str, flow_state: Dict[str, Any]) -> Dict[str, Any]:
         """
         Use LLM to analyze call and extract structured data
@@ -552,6 +554,7 @@ TRANSCRIPT:
 
         return " ".join(summary_parts)
 
+    @trace_api_call("llm.transfer_analysis", add_args=False)
     async def analyze_for_transfer(self, flow_state: Dict[str, Any]) -> Dict[str, Any]:
         """
         Run early analysis for transfer escalation (before WebSocket closes)
@@ -752,6 +755,7 @@ TRANSCRIPT:
 
         return booking_data
 
+    @trace_api_call("db.save_call_data", add_args=False)
     async def save_to_database(self, flow_state: Dict[str, Any]) -> bool:
         """
         Extract all data and UPDATE tb_stat table row (bridge already created it)

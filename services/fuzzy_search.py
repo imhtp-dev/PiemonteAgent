@@ -9,6 +9,7 @@ from rapidfuzz import fuzz, process
 from models.requests import HealthService, ServiceSearchResponse
 from services.local_data_service import local_data_service
 from services.config import config
+from utils.tracing import trace_sync_call
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,7 @@ class FuzzySearchService:
         """Alias for search_services for compatibility"""
         return self.search_services(search_term, limit)
 
+    @trace_sync_call("search.fuzzy_services")
     def search_services(self, search_term: str, limit: int = None) -> ServiceSearchResponse:
         """
         Enhanced fuzzy search for health services

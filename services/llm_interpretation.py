@@ -9,6 +9,7 @@ import json
 from typing import Dict, List, Any, Optional
 from loguru import logger
 from openai import AsyncOpenAI
+from utils.tracing import trace_api_call
 
 
 # System prompt for LLM interpretation
@@ -80,6 +81,7 @@ def format_group_details(service_groups: List[Dict]) -> str:
     return "\n\n".join(details)
 
 
+@trace_api_call("llm.sorting_interpretation")
 async def interpret_sorting_scenario(
     api_response_data: List[Dict],
     service_groups: List[Dict],

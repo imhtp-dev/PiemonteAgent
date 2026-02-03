@@ -50,13 +50,42 @@ validate_pipecat_flows_compatibility()
 
 class TrackedFlowManager(FlowManager):
     """
-    FlowManager with automatic failure tracking.
+    FlowManager with automatic failure tracking and node transition tracing.
 
     Overrides _call_handler to intercept ALL handler calls and track failures.
+    Overrides _set_node to emit spans for every node transition.
     When failure threshold is reached, automatically transitions to transfer node.
 
     No changes needed to individual handlers - tracking is completely automatic.
     """
+
+    async def _set_node(self, node_id: str, node_config) -> None:
+        """Override to emit a span for every node transition (visible in LangFuse)."""
+        previous_node = self.state.get("current_node", "none")
+
+        with _tracer.start_as_current_span(f"node.{node_id}") as span:
+            span.set_attribute("node.name", node_id)
+            span.set_attribute("node.previous", previous_node)
+            span.set_attribute("node.transition", f"{previous_node} → {node_id}")
+
+            # Add flow state context
+            add_flow_state_attributes(self.state)
+
+            # Track node in state
+            self.state["current_node"] = node_id
+            self.state.setdefault("node_history", []).append(node_id)
+            span.set_attribute("node.history_length", len(self.state["node_history"]))
+
+            try:
+                await super()._set_node(node_id, node_config)
+                span.set_attribute("node.transition_success", True)
+                logger.info(f"📍 Node transition: {previous_node} → {node_id}")
+            except Exception as e:
+                span.set_status(Status(StatusCode.ERROR, str(e)[:200]))
+                span.record_exception(e)
+                span.set_attribute("node.transition_success", False)
+                logger.error(f"❌ Node transition failed: {previous_node} → {node_id}: {e}")
+                raise
 
     async def _call_handler(
         self,

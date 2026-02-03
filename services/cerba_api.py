@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from services.config import config
 from services.auth import auth_service
 from models.requests import HealthService, HealthCenter
+from utils.tracing import trace_sync_call
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ class CerbaAPIService:
     def __init__(self):
         self.base_url = config.CERBA_BASE_URL
     
+    @trace_sync_call("api.cerba_request", add_args=False)
     def _make_request(self, endpoint: str, params: Optional[Dict] = None) -> Any:
         """
         Make authenticated request to Cerba API
