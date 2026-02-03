@@ -35,6 +35,11 @@ class AzureSTTServiceWithPhrases(AzureSTTService):
         self._phrase_list_weight = phrase_list_weight
         self._phrase_list_grammar = None
         self._audio_chunks_received = 0
+        self._model_name = "azure-stt"
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
 
     def _on_handle_recognized(self, event):
         """Override to add debug logging"""
@@ -194,10 +199,6 @@ def create_azure_stt_service() -> "AzureSTTServiceWithPhrases":
             service_params["phrase_list_weight"] = config.get("phrase_list_weight", 1.0)
 
         stt_service = AzureSTTServiceWithPhrases(**service_params)
-
-        # Set model_name so Pipecat's @traced_stt reports it to LangFuse
-        # (Azure STT doesn't set this by default, causing "unknown" in dashboard)
-        stt_service.model_name = "azure-stt"
 
         logger.success("✅ Azure STT service with phrase list created successfully")
         return stt_service
