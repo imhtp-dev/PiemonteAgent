@@ -706,6 +706,30 @@ async def websocket_endpoint(websocket: WebSocket):
                 import traceback
                 traceback.print_exc()
 
+            # Set LangFuse input/output on conversation span BEFORE task.cancel() closes it
+            # This is the only window where the span is still open
+            try:
+                call_extractor = flow_manager.state.get("call_extractor")
+                if call_extractor and os.getenv("ENABLE_TRACING", "false").lower() == "true":
+                    transcript = call_extractor.transcript or []
+                    first_user_msg = None
+                    last_assistant_msg = None
+                    for entry in transcript:
+                        if entry.get("role") == "user" and first_user_msg is None:
+                            first_user_msg = entry.get("content", "")
+                        if entry.get("role") == "assistant":
+                            last_assistant_msg = entry.get("content", "")
+
+                    conv_span = getattr(getattr(task, '_turn_trace_observer', None), '_conversation_span', None)
+                    if conv_span and hasattr(conv_span, 'set_attribute'):
+                        if first_user_msg:
+                            conv_span.set_attribute("langfuse.observation.input", first_user_msg[:1000])
+                        if last_assistant_msg:
+                            conv_span.set_attribute("langfuse.observation.output", last_assistant_msg[:1000])
+                        logger.info("📝 Set langfuse input/output on conversation span")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not set conversation span attrs: {e}")
+
             # Clear transcript session and cleanup
             cleanup_transcript_manager(session_id)
 
@@ -774,6 +798,29 @@ async def websocket_endpoint(websocket: WebSocket):
                 import traceback
                 traceback.print_exc()
 
+            # Set LangFuse input/output on conversation span BEFORE task.cancel()
+            try:
+                call_extractor = flow_manager.state.get("call_extractor")
+                if call_extractor and os.getenv("ENABLE_TRACING", "false").lower() == "true":
+                    transcript = call_extractor.transcript or []
+                    first_user_msg = None
+                    last_assistant_msg = None
+                    for entry in transcript:
+                        if entry.get("role") == "user" and first_user_msg is None:
+                            first_user_msg = entry.get("content", "")
+                        if entry.get("role") == "assistant":
+                            last_assistant_msg = entry.get("content", "")
+
+                    conv_span = getattr(getattr(task, '_turn_trace_observer', None), '_conversation_span', None)
+                    if conv_span and hasattr(conv_span, 'set_attribute'):
+                        if first_user_msg:
+                            conv_span.set_attribute("langfuse.observation.input", first_user_msg[:1000])
+                        if last_assistant_msg:
+                            conv_span.set_attribute("langfuse.observation.output", last_assistant_msg[:1000])
+                        logger.info("📝 Set langfuse input/output on conversation span (timeout)")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not set conversation span attrs (timeout): {e}")
+
             # Clear transcript session and cleanup
             cleanup_transcript_manager(session_id)
 
@@ -823,97 +870,81 @@ async def websocket_endpoint(websocket: WebSocket):
 
             call_extractor = flow_manager.state.get("call_extractor")
             if call_extractor:
-                # ✅ Query LangFuse for token usage before saving to Supabase
+                # ✅ Query LangFuse for token usage + update trace metadata
+                token_data = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
                 if os.getenv("ENABLE_TRACING", "false").lower() == "true":
-                    logger.info("📊 Querying LangFuse for token usage...")
+                    # Note: conversation span input/output was already set in on_client_disconnected
+                    # This block handles: token retrieval + trace name/tags/metadata update
+
+                    # STEP 1: Flush and get token counts
                     try:
-                        # Wait briefly for Pipecat's BatchSpanProcessor to queue final spans
-                        # The conversation tracing just ended, spans need time to be queued
-                        logger.info("⏳ Waiting 1 second for spans to be queued...")
-                        await asyncio.sleep(1)
-
-                        # CRITICAL: Flush traces to LangFuse BEFORE querying
-                        # Otherwise spans are still in BatchSpanProcessor queue
-                        logger.info("🔄 Flushing traces to LangFuse before token query...")
+                        await asyncio.sleep(2)
                         flush_traces()
-
-                        # Wait for LangFuse to index the traces
-                        # Production needs more time due to cloud indexing latency
-                        logger.info("⏳ Waiting 5 seconds for LangFuse to index traces...")
-                        await asyncio.sleep(5)
-
-                        # Get token usage from LangFuse
+                        # Production LangFuse cloud needs more indexing time
+                        await asyncio.sleep(10)
                         token_data = await get_conversation_tokens(session_id)
-
-                        # Update call_extractor with token data
                         call_extractor.llm_token_count = token_data["total_tokens"]
-                        logger.success(f"✅ Updated call_extractor with LangFuse tokens: {token_data['total_tokens']}")
-
-                        # Update trace with Input/Output from transcript
-                        try:
-                            transcript = call_extractor.transcript or []
-                            first_user_msg = None
-                            last_assistant_msg = None
-
-                            for entry in transcript:
-                                if entry.get("role") == "user" and first_user_msg is None:
-                                    first_user_msg = entry.get("content", "")
-                                if entry.get("role") == "assistant":
-                                    last_assistant_msg = entry.get("content", "")
-
-                            # Determine call_type for trace name
-                            flow_state = flow_manager.state or {}
-                            if flow_state.get("transfer_requested"):
-                                call_type = "transfer"
-                            elif flow_state.get("booking_code"):
-                                call_type = "booking"
-                            elif flow_state.get("selected_services"):
-                                call_type = "booking_started"
-                            else:
-                                call_type = "info"
-
-                            caller_phone = flow_state.get("caller_phone_from_talkdesk", "")
-
-                            if first_user_msg or last_assistant_msg:
-                                # Build enrichment metadata for LangFuse trace
-                                trace_metadata = {
-                                    "outcome": call_type,
-                                    "last_node": flow_state.get("current_node", "unknown"),
-                                    "node_history": flow_state.get("node_history", []),
-                                    "failure_count": flow_state.get("failure_tracker", {}).get("count", 0),
-                                    "duration_seconds": round(call_extractor._calculate_duration() or 0, 1),
-                                    "stt_provider": settings.stt_provider,
-                                    "llm_total_tokens": token_data.get("total_tokens", 0),
-                                }
-
-                                # Calculate cost breakdown
-                                try:
-                                    from utils.cost_tracker import calculate_call_cost
-                                    cost = calculate_call_cost(
-                                        llm_input_tokens=token_data.get("prompt_tokens", 0),
-                                        llm_output_tokens=token_data.get("completion_tokens", 0),
-                                        tts_characters=0,  # TODO: aggregate from TTS spans
-                                        call_duration_seconds=trace_metadata["duration_seconds"],
-                                        stt_provider=settings.stt_provider,
-                                    )
-                                    trace_metadata.update(cost.to_dict())
-                                except Exception as cost_err:
-                                    logger.warning(f"⚠️ Cost calculation failed: {cost_err}")
-
-                                await update_trace_io(
-                                    session_id,
-                                    first_user_msg or "",
-                                    last_assistant_msg or "",
-                                    call_type=call_type,
-                                    caller_phone=caller_phone,
-                                    metadata=trace_metadata
-                                )
-                        except Exception as io_err:
-                            logger.error(f"❌ Failed to update trace I/O: {io_err}")
-
+                        logger.success(f"✅ LangFuse tokens: {token_data['total_tokens']}")
                     except Exception as e:
                         logger.error(f"❌ Failed to retrieve tokens from LangFuse: {e}")
-                        # Continue with save even if LangFuse query fails
+
+                    # STEP 2: Update trace name, tags, metadata (always runs)
+                    try:
+                        transcript = call_extractor.transcript or []
+                        first_user_msg = None
+                        last_assistant_msg = None
+                        for entry in transcript:
+                            if entry.get("role") == "user" and first_user_msg is None:
+                                first_user_msg = entry.get("content", "")
+                            if entry.get("role") == "assistant":
+                                last_assistant_msg = entry.get("content", "")
+
+                        flow_state = flow_manager.state or {}
+                        if flow_state.get("transfer_requested"):
+                            call_type = "transfer"
+                        elif flow_state.get("booking_code"):
+                            call_type = "booking"
+                        elif flow_state.get("selected_services"):
+                            call_type = "booking_started"
+                        else:
+                            call_type = "info"
+
+                        caller_phone = flow_state.get("caller_phone_from_talkdesk", "")
+
+                        if first_user_msg or last_assistant_msg:
+                            trace_metadata = {
+                                "outcome": call_type,
+                                "last_node": flow_state.get("current_node", "unknown"),
+                                "node_history": flow_state.get("node_history", []),
+                                "failure_count": flow_state.get("failure_tracker", {}).get("count", 0),
+                                "duration_seconds": round(call_extractor._calculate_duration() or 0, 1),
+                                "stt_provider": settings.stt_provider,
+                                "llm_total_tokens": token_data.get("total_tokens", 0),
+                            }
+
+                            try:
+                                from utils.cost_tracker import calculate_call_cost
+                                cost = calculate_call_cost(
+                                    llm_input_tokens=token_data.get("prompt_tokens", 0),
+                                    llm_output_tokens=token_data.get("completion_tokens", 0),
+                                    tts_characters=0,
+                                    call_duration_seconds=trace_metadata["duration_seconds"],
+                                    stt_provider=settings.stt_provider,
+                                )
+                                trace_metadata.update(cost.to_dict())
+                            except Exception as cost_err:
+                                logger.warning(f"⚠️ Cost calculation failed: {cost_err}")
+
+                            await update_trace_io(
+                                session_id,
+                                first_user_msg or "",
+                                last_assistant_msg or "",
+                                call_type=call_type,
+                                caller_phone=caller_phone,
+                                metadata=trace_metadata
+                            )
+                    except Exception as io_err:
+                        logger.error(f"❌ Failed to update trace I/O: {io_err}")
 
                 # Save recordings if enabled (BEFORE call_extractor.save_to_database)
                 if recording_manager and audiobuffer:
