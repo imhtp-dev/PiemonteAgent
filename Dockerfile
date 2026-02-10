@@ -38,8 +38,7 @@ RUN python -c "import nltk; nltk.download('punkt_tab', download_dir='/usr/local/
 FROM nltk-data as torch-models
 RUN mkdir -p /opt/torch && \
     python -c "import torch; torch.hub.set_dir('/opt/torch'); torch.hub.load('snakers4/silero-vad', 'silero_vad', force_reload=True, trust_repo=True)" && \
-    echo "✅ Silero VAD models downloaded successfully" && \
-    python -c "from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3; print('✅ Smart Turn V3 model downloaded successfully')"
+    echo "✅ Silero VAD models downloaded successfully"
 
 # Application layer (copy code LAST for best caching)
 FROM torch-models as app

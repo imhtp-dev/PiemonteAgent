@@ -158,31 +158,32 @@ When user responds, call verify_basic_info: confirms → action="confirm", chang
     )
 
 def create_flow_processing_node(service_name: str, tts_message: str) -> NodeConfig:
-    """Create a processing node that runs flow generation via a single custom action.
-
-    The custom action handles TTS internally via queue_frame (fire-and-forget),
-    then runs the API call, then transitions. No tts_say action = no
-    ActionFinishedFrame dependency that can be dropped by interruptions.
-    """
-    from flows.handlers.flow_handlers import perform_flow_generation_action
+    """Create a processing node that speaks immediately before performing flow generation"""
+    from flows.handlers.flow_handlers import perform_flow_generation_and_transition
 
     return NodeConfig(
         name="flow_processing",
         pre_actions=[
             {
-                "type": "flow_generation",
-                "handler": perform_flow_generation_action,
-                "tts_text": tts_message,
+                "type": "tts_say",
+                "text": tts_message
             }
         ],
         role_messages=[{
             "role": "system",
-            "content": f"Processing flow generation for {service_name}. {settings.language_config}"
+            "content": f"You are processing flow generation for {service_name}. Immediately call perform_flow_generation to execute the actual flow analysis. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",
-            "content": f"Analyzing {service_name} for special requirements. Please wait."
+            "content": f"Now analyzing {service_name} for special requirements and additional options. Please wait."
         }],
-        functions=[],
-        respond_immediately=False,
+        functions=[
+            FlowsFunctionSchema(
+                name="perform_flow_generation",
+                handler=perform_flow_generation_and_transition,
+                description="Execute the actual flow generation after TTS message",
+                properties={},
+                required=[]
+            )
+        ]
     )

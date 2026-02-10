@@ -217,31 +217,32 @@ def create_confirm_phone_node(phone: str) -> NodeConfig:
 
 
 def create_booking_processing_node(tts_message: str) -> NodeConfig:
-    """Create a processing node that runs booking creation via a single custom action.
-
-    The custom action handles TTS internally via queue_frame (fire-and-forget),
-    then runs the booking API, then transitions. No tts_say action = no
-    ActionFinishedFrame dependency that can be dropped by interruptions.
-    """
-    from flows.handlers.patient_detail_handlers import perform_booking_creation_action
+    """Create a processing node that speaks immediately before performing booking creation"""
+    from flows.handlers.patient_detail_handlers import perform_booking_creation_and_transition
 
     return NodeConfig(
         name="booking_processing",
         pre_actions=[
             {
-                "type": "booking_creation",
-                "handler": perform_booking_creation_action,
-                "tts_text": tts_message,
+                "type": "tts_say",
+                "text": tts_message
             }
         ],
         role_messages=[{
             "role": "system",
-            "content": f"Processing booking creation. {settings.language_config}"
+            "content": f"You are processing a booking creation. Immediately call perform_booking to execute the actual booking creation. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",
-            "content": "Creating your booking with all provided details. Please wait."
+            "content": "Now creating your booking with all provided details. Please wait for confirmation."
         }],
-        functions=[],
-        respond_immediately=False,
+        functions=[
+            FlowsFunctionSchema(
+                name="perform_booking",
+                handler=perform_booking_creation_and_transition,
+                description="Execute the actual booking creation after TTS message",
+                properties={},
+                required=[]
+            )
+        ]
     )

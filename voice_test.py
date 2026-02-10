@@ -189,9 +189,9 @@ class DailyTestConfig:
             "connection_timeout": 30,
             "vad_analyzer": SileroVADAnalyzer(
                 params=VADParams(
-                    start_secs=0.1,
-                    stop_secs=0.2 if settings.smart_turn_enabled else 0.3,
-                    min_volume=0.2
+                    start_secs=0.1,    # Faster detection for testing
+                    stop_secs=0.3,     # Quicker stop for testing
+                    min_volume=0.2     # More sensitive for testing
                 )
             )
         }
@@ -361,7 +361,7 @@ class DailyHealthcareFlowTester:
         stt = create_stt_service()
         tts = create_tts_service()
         llm = create_llm_service()
-        context_aggregator = create_context_aggregator(llm, smart_turn_enabled=settings.smart_turn_enabled)
+        context_aggregator = create_context_aggregator(llm)
 
         logger.info("✅ All services initialized")
 

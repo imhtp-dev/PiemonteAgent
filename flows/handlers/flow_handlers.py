@@ -59,81 +59,14 @@ async def generate_flow_and_transition(args: FlowArgs, flow_manager: FlowManager
         }, create_error_node("Flow generation failed. Please try again.")
 
 
-async def perform_flow_generation_action(action: dict, flow_manager) -> None:
-    """Custom action handler: speak TTS, run flow generation, and transition directly.
-
-    Handles TTS internally via queue_frame instead of relying on tts_say action,
-    so there's no ActionFinishedFrame dependency that can be dropped by interruptions.
-    """
-    from pipecat.frames.frames import TTSSpeakFrame
-    HARDCODED_HC_UUID = "c5535638-6c18-444c-955d-89139d8276be"
-
-    try:
-        tts_text = action.get("tts_text", "")
-        if tts_text:
-            await flow_manager.task.queue_frame(TTSSpeakFrame(text=tts_text))
-        params = flow_manager.state.get("pending_flow_params", {})
-        if not params:
-            from flows.nodes.completion import create_error_node
-            await flow_manager.set_node_from_config(
-                create_error_node("Missing flow parameters. Please start over.")
-            )
-            return
-
-        primary_service = params["primary_service"]
-        selected_services = params["selected_services"]
-        gender = params["gender"]
-        date_of_birth = params["date_of_birth"]
-        address = params["address"]
-
-        logger.info(f"🔄 Generating decision flow for: {primary_service.name}")
-        logger.info(f"🏥 Using hardcoded health center UUID for flow generation: {HARDCODED_HC_UUID}")
-
-        hc_uuids = [HARDCODED_HC_UUID]
-        logger.info(f"🔄 Calling genera_flow with: centers={hc_uuids}, service={primary_service.uuid}")
-
-        import asyncio
-        loop = asyncio.get_event_loop()
-        logger.info(f"🔍 Starting non-blocking flow generation")
-        generated_flow = await loop.run_in_executor(
-            None,
-            genera_flow,
-            hc_uuids,
-            primary_service.uuid
-        )
-        logger.info(f"✅ Flow generation completed")
-
-        if not generated_flow:
-            logger.warning(f"Failed to generate flow for {primary_service.name}, proceeding with direct booking")
-            from flows.nodes.booking import create_final_center_search_node
-            await flow_manager.set_node_from_config(create_final_center_search_node())
-            return
-
-        flow_manager.state["generated_flow"] = generated_flow
-        logger.success(f"✅ Generated decision flow for {primary_service.name}")
-
-        from flows.nodes.booking import create_flow_navigation_node
-        await flow_manager.set_node_from_config(
-            create_flow_navigation_node(generated_flow, primary_service.name)
-        )
-
-    except Exception as e:
-        logger.error(f"Flow generation action error: {e}")
-        from flows.nodes.completion import create_error_node
-        await flow_manager.set_node_from_config(
-            create_error_node("Failed to generate decision flow. Please try again.")
-        )
-
-
 async def perform_flow_generation_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
-    """Perform the actual flow generation after TTS message.
-
-    NOTE: LEGACY handler used by LLM function calling pattern.
-    New code uses perform_flow_generation_action instead.
-    """
+    """Perform the actual flow generation after TTS message"""
+    # Hardcoded health center UUID for flow generation (Tradate center)
+    # This avoids API call - actual center search happens later in Stage 5
     HARDCODED_HC_UUID = "c5535638-6c18-444c-955d-89139d8276be"
 
     try:
+        # Get stored flow parameters
         params = flow_manager.state.get("pending_flow_params", {})
         if not params:
             from flows.nodes.completion import create_error_node
@@ -142,6 +75,7 @@ async def perform_flow_generation_and_transition(args: FlowArgs, flow_manager: F
                 "message": "Missing flow parameters"
             }, create_error_node("Missing flow parameters. Please start over.")
 
+        # Extract parameters
         primary_service = params["primary_service"]
         selected_services = params["selected_services"]
         gender = params["gender"]
@@ -151,6 +85,8 @@ async def perform_flow_generation_and_transition(args: FlowArgs, flow_manager: F
         logger.info(f"🔄 Generating decision flow for: {primary_service.name}")
         logger.info(f"🏥 Using hardcoded health center UUID for flow generation: {HARDCODED_HC_UUID}")
 
+        # Use hardcoded health center UUID for flow generation
+        # Actual center availability will be checked in Stage 5 with radius expansion
         hc_uuids = [HARDCODED_HC_UUID]
         logger.info(f"🔄 Calling genera_flow with: centers={hc_uuids}, service={primary_service.uuid}")
 
@@ -158,32 +94,35 @@ async def perform_flow_generation_and_transition(args: FlowArgs, flow_manager: F
         loop = asyncio.get_event_loop()
         logger.info(f"🔍 Starting non-blocking flow generation")
         generated_flow = await loop.run_in_executor(
-            None,
+            None,  # Use default thread pool executor
             genera_flow,
-            hc_uuids,
-            primary_service.uuid
+            hc_uuids,  # Pass list of health center UUIDs
+            primary_service.uuid  # Pass medical exam ID
         )
         logger.info(f"✅ Flow generation completed")
-
+        
         if not generated_flow:
             logger.warning(f"Failed to generate flow for {primary_service.name}, proceeding with direct booking")
             from flows.nodes.booking import create_final_center_search_node
             return {"success": True, "message": "Proceeding to center selection"}, create_final_center_search_node()
-
+        
+        # Store the generated flow in state
         flow_manager.state["generated_flow"] = generated_flow
-
+        # Note: available_centers will be populated later in Stage 5 (center search with radius expansion)
+        
         logger.success(f"✅ Generated decision flow for {primary_service.name}")
-
+        
         result = {
             "success": True,
             "flow_generated": True,
             "service_name": primary_service.name,
             "message": f"Generated decision flow for {primary_service.name}"
         }
-
+        
+        # Transition to LLM-driven flow navigation
         from flows.nodes.booking import create_flow_navigation_node
         return result, create_flow_navigation_node(generated_flow, primary_service.name)
-
+        
     except Exception as e:
         logger.error(f"Flow generation error: {e}")
         from flows.nodes.completion import create_error_node

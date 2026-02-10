@@ -167,31 +167,6 @@ async def perform_health_services_search_and_transition(args: FlowArgs, flow_man
         }, create_search_retry_node("Service search failed. Please try again.")
 
 
-async def perform_search_action(action: dict, flow_manager) -> None:
-    """Custom action handler: speak TTS, run service search, and transition directly.
-
-    Handles TTS internally via queue_frame instead of relying on tts_say action,
-    so there's no ActionFinishedFrame dependency that can be dropped by interruptions.
-    """
-    from pipecat.frames.frames import TTSSpeakFrame
-
-    try:
-        tts_text = action.get("tts_text", "")
-        if tts_text:
-            await flow_manager.task.queue_frame(TTSSpeakFrame(text=tts_text))
-
-        # Delegate to existing handler
-        result, next_node = await perform_health_services_search_and_transition({}, flow_manager)
-        await flow_manager.set_node_from_config(next_node)
-
-    except Exception as e:
-        logger.error(f"Search action error: {e}")
-        from flows.nodes.service_selection import create_search_retry_node
-        await flow_manager.set_node_from_config(
-            create_search_retry_node("Service search failed. Please try again.")
-        )
-
-
 async def select_service_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
     """Handle service selection and transition to address collection"""
     service_uuid = args.get("service_uuid", "").strip()
@@ -207,15 +182,7 @@ async def select_service_and_transition(args: FlowArgs, flow_manager: FlowManage
         if service.uuid == service_uuid:
             selected_service = service
             break
-
-    # Fallback: match by name if LLM passed name instead of UUID
-    if not selected_service:
-        for service in services_found:
-            if service.name.strip().lower() == service_uuid.strip().lower():
-                selected_service = service
-                logger.warning(f"⚠️ select_service matched by name fallback: {service.name}")
-                break
-
+    
     if not selected_service:
         return {"success": False, "message": "Service not found"}, None
     

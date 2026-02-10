@@ -103,21 +103,6 @@ class Settings:
         }
     
     @property
-    def smart_turn_enabled(self) -> bool:
-        """Toggle Smart Turn detection via env var (default: enabled)"""
-        return os.getenv("SMART_TURN_ENABLED", "true").lower() == "true"
-
-    @property
-    def smart_turn_config(self) -> Dict[str, Any]:
-        """Smart Turn ML-based end-of-turn detection config"""
-        return {
-            "stop_secs": float(os.getenv("SMART_TURN_STOP_SECS", "3.0")),
-            "pre_speech_ms": float(os.getenv("SMART_TURN_PRE_SPEECH_MS", "500")),
-            "max_duration_secs": float(os.getenv("SMART_TURN_MAX_DURATION", "8")),
-            "cpu_count": int(os.getenv("SMART_TURN_CPU_COUNT", "1")),
-        }
-
-    @property
     def pipeline_config(self) -> Dict[str, Any]:
         """Pipeline configuration"""
         return {

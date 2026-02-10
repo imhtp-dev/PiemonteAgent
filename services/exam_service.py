@@ -83,7 +83,7 @@ class ExamService:
                             "toolCallId": "pipecat_exam_by_visit",
                             "function": {
                                 "name": "get_list_exam_by_visit",
-                                "arguments": json.dumps({"visit": visit_type})
+                                "arguments": json.dumps({"visit_type": visit_type})
                             }
                         }
                     ]
@@ -124,16 +124,6 @@ class ExamService:
                         visit_type=visit_type,
                         success=False,
                         error="Empty exam data"
-                    )
-
-                # API may return error string instead of dict
-                if isinstance(exam_data, str):
-                    logger.error(f"❌ API returned error string: {exam_data}")
-                    return ExamResult(
-                        exams=[],
-                        visit_type=visit_type,
-                        success=False,
-                        error=exam_data
                     )
 
                 # Extract fields from API response
@@ -245,16 +235,6 @@ class ExamService:
                         sport=sport,
                         success=False,
                         error="Empty exam data"
-                    )
-
-                # API may return error string instead of dict
-                if isinstance(exam_data, str):
-                    logger.error(f"❌ API returned error string: {exam_data}")
-                    return ExamResult(
-                        exams=[],
-                        sport=sport,
-                        success=False,
-                        error=exam_data
                     )
 
                 # Extract fields from API response
