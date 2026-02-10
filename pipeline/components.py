@@ -230,10 +230,11 @@ def create_tts_service() -> ElevenLabsTTSService:
 def create_llm_service() -> OpenAILLMService:
     """Create and configure OpenAI LLM service"""
     config = settings.openai_config
-    
+
     return OpenAILLMService(
         api_key=config["api_key"],
-        model=config["model"]
+        model=config["model"],
+        function_call_timeout_secs=30.0,
     )
 
 
