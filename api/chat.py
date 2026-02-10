@@ -115,7 +115,7 @@ async def send_chat_message(
         
         # Create services
         llm = create_llm_service()
-        context_aggregator = create_context_aggregator(llm)
+        context_aggregator, _node_mute = create_context_aggregator(llm)
         
         # Create processors
         text_input = TextInputProcessor()

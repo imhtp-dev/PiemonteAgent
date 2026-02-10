@@ -420,7 +420,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
         tts = create_tts_service()
         llm = create_llm_service()
-        context_aggregator = create_context_aggregator(llm)
+        context_aggregator, node_mute_strategy = create_context_aggregator(llm)
 
         # CREATE TRANSCRIPT PROCESSOR FOR RECORDING CONVERSATIONS
         transcript_processor = TranscriptProcessor()
@@ -539,6 +539,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
         # NOW create the real FlowManager with all parameters
         flow_manager = create_flow_manager(task, llm, context_aggregator, transport)
+
+        # Link node-aware mute strategy to flow state (must be after flow_manager creation)
+        node_mute_strategy.set_flow_state(flow_manager.state)
 
         # ✅ Store business_status, session_id, and stream_sid in flow manager state
         flow_manager.state["business_status"] = business_status

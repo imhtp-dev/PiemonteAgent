@@ -528,6 +528,10 @@ async def check_cerba_membership_and_transition(args: FlowArgs, flow_manager: Fl
         first_service = flow_manager.state["selected_services"][0]
         first_service_name = first_service.name
 
+    # Get center name from state for context after RESET
+    selected_center = flow_manager.state.get("selected_center")
+    center_name = selected_center.name if selected_center else None
+
     logger.info(f"📅 Asking for date/time for first appointment: {first_service_name}")
 
     from flows.nodes.booking import create_collect_datetime_node
@@ -535,7 +539,7 @@ async def check_cerba_membership_and_transition(args: FlowArgs, flow_manager: Fl
         "success": True,
         "is_cerba_member": is_member,
         "membership_status": "member" if is_member else "non-member"
-    }, create_collect_datetime_node(first_service_name, False)
+    }, create_collect_datetime_node(first_service_name, False, center_name)
 
 
 
@@ -1773,7 +1777,10 @@ async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: Flow
                     "has_more_services": True,
                     "next_service": next_service.name,
                     "remaining_services": len(selected_services) - current_service_index - 1
-                }, create_collect_datetime_node(next_service.name, True)  # Ask for time for next service
+                }, create_collect_datetime_node(
+                    next_service.name, True,
+                    flow_manager.state.get("selected_center").name if flow_manager.state.get("selected_center") else None
+                )
 
             else:
                 # All groups/services booked - show booking summary

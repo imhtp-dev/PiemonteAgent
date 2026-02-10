@@ -36,9 +36,10 @@ def create_collect_first_name_node() -> NodeConfig:
     """
     return NodeConfig(
         name="collect_first_name",
+        context_strategy=ContextStrategyConfig(strategy=ContextStrategy.RESET),
         role_messages=[{
             "role": "system",
-            "content": f"Collect the patient's first name only (nome). Do NOT ask for surname yet. {settings.language_config}"
+            "content": f"You are a healthcare booking agent collecting patient details. Collect the patient's first name only (nome). Do NOT ask for surname yet. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",

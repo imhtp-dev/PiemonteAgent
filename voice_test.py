@@ -361,7 +361,7 @@ class DailyHealthcareFlowTester:
         stt = create_stt_service()
         tts = create_tts_service()
         llm = create_llm_service()
-        context_aggregator = create_context_aggregator(llm)
+        context_aggregator, node_mute_strategy = create_context_aggregator(llm)
 
         logger.info("✅ All services initialized")
 
@@ -484,6 +484,9 @@ class DailyHealthcareFlowTester:
 
         # CREATE FLOW MANAGER (IDENTICAL TO BOT.PY)
         self.flow_manager = create_flow_manager(self.task, llm, context_aggregator, self.transport)
+
+        # Link node-aware mute strategy to flow state (must be after flow_manager creation)
+        node_mute_strategy.set_flow_state(self.flow_manager.state)
 
         # Store business_status, session_id, and stream_sid in flow manager state (required for info agent)
         self.flow_manager.state["business_status"] = "open"  # Always open for testing

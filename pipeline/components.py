@@ -6,8 +6,10 @@ from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair, LLMUserAggregatorParams
+from pipecat.turns.user_mute.function_call_user_mute_strategy import FunctionCallUserMuteStrategy
 from pipecat.frames.frames import StartFrame
+from pipeline.node_aware_mute import NodeAwareMuteStrategy
 from deepgram import LiveOptions
 from loguru import logger
 from typing import Union
@@ -235,6 +237,25 @@ def create_llm_service() -> OpenAILLMService:
     )
 
 
-def create_context_aggregator(llm_service: OpenAILLMService) -> LLMContextAggregatorPair:
-    """Create context aggregator for the LLM using universal LLMContext"""
-    return LLMContextAggregatorPair(LLMContext())
+def create_context_aggregator(llm_service: OpenAILLMService) -> tuple[LLMContextAggregatorPair, NodeAwareMuteStrategy]:
+    """Create context aggregator with mute strategies.
+
+    Two mute strategies (OR logic — either triggers mute):
+    - FunctionCallUserMuteStrategy: mutes during function call execution
+    - NodeAwareMuteStrategy: mutes during bot speech on processing nodes
+
+    Returns tuple of (aggregator, node_mute_strategy).
+    Caller must call node_mute_strategy.set_flow_state(flow_manager.state)
+    after flow_manager is created.
+    """
+    node_mute_strategy = NodeAwareMuteStrategy()
+    aggregator = LLMContextAggregatorPair(
+        LLMContext(),
+        user_params=LLMUserAggregatorParams(
+            user_mute_strategies=[
+                FunctionCallUserMuteStrategy(),
+                node_mute_strategy,
+            ],
+        ),
+    )
+    return aggregator, node_mute_strategy

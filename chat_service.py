@@ -491,7 +491,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # Create AI services
             llm = create_llm_service()
-            context_aggregator = create_context_aggregator(llm)
+            context_aggregator, _node_mute = create_context_aggregator(llm)
 
             # Initialize transcript manager
             transcript_manager = get_transcript_manager(session_id)

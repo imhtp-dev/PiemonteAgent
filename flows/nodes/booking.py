@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Dict, Any, List
-from pipecat_flows import NodeConfig, FlowsFunctionSchema
+from pipecat_flows import NodeConfig, FlowsFunctionSchema, ContextStrategyConfig, ContextStrategy
 from loguru import logger
 
 from models.requests import HealthService, HealthCenter
@@ -413,16 +413,14 @@ Do NOT say "finalizing booking" or proceed without calling the function. {settin
     )
 
 
-def create_collect_datetime_node(service_name: str = None, is_multi_service: bool = False) -> NodeConfig:
+def create_collect_datetime_node(service_name: str = None, is_multi_service: bool = False, center_name: str = None) -> NodeConfig:
     """Create date and time collection node with LLM-driven natural language support
 
     Args:
         service_name: Optional service name to show in prompt (e.g., "Visita Ortopedica")
         is_multi_service: If True, says "next appointment", if False says "first appointment"
+        center_name: Optional center name for context after RESET
     """
-    from datetime import datetime
-    from pipecat_flows import ContextStrategyConfig, ContextStrategy
-
     # Get today's complete date information for LLM context
     today = datetime.now()
     today_date = today.strftime("%Y-%m-%d")
@@ -440,8 +438,16 @@ def create_collect_datetime_node(service_name: str = None, is_multi_service: boo
         task_content = "What date and time would you prefer for your appointment?"
         node_name = "collect_datetime"
 
+    # Build booking context summary for RESET
+    booking_context = ""
+    if service_name:
+        booking_context += f"Booking service: {service_name}."
+    if center_name:
+        booking_context += f" Health center: {center_name}."
+
     return NodeConfig(
         name=node_name,
+        context_strategy=ContextStrategyConfig(strategy=ContextStrategy.RESET),
         pre_actions=[
             {
                 "type": "tts_say",
@@ -450,7 +456,9 @@ def create_collect_datetime_node(service_name: str = None, is_multi_service: boo
         ],
         role_messages=[{
             "role": "system",
-            "content": f"""Today is {today_day}, {today_formatted} (date: {today_date}). The current year is 2025.
+            "content": f"""{booking_context}
+
+Today is {today_day}, {today_formatted} (date: {today_date}). The current year is 2025.
 
 You can understand natural language date expressions and calculate the correct dates automatically. When a patient mentions expressions like:
 - "tomorrow" → calculate the next day
@@ -1200,6 +1208,7 @@ Would you like to proceed with this booking? If yes, I'll just need to collect s
 
     return NodeConfig(
         name="booking_summary_confirmation",
+        context_strategy=ContextStrategyConfig(strategy=ContextStrategy.RESET),
         role_messages=[{
             "role": "system",
             "content": f"""Present EXACTLY the booking summary below. DO NOT hallucinate times/dates/prices.

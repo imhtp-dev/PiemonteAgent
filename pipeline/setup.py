@@ -48,7 +48,7 @@ def create_pipeline_task(transport: DailyTransport) -> tuple:
     stt = create_stt_service()
     tts = create_tts_service()
     llm = create_llm_service()
-    context_aggregator = create_context_aggregator(llm)
+    context_aggregator, _node_mute = create_context_aggregator(llm)
 
     # Create recording components
     session_recorder = SessionRecorder()
