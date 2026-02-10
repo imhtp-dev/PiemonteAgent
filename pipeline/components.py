@@ -235,6 +235,44 @@ def create_llm_service() -> OpenAILLMService:
     )
 
 
-def create_context_aggregator(llm_service: OpenAILLMService) -> LLMContextAggregatorPair:
-    """Create context aggregator for the LLM using universal LLMContext"""
+def create_context_aggregator(llm_service: OpenAILLMService, smart_turn_enabled: bool = False) -> LLMContextAggregatorPair:
+    """Create context aggregator for the LLM using universal LLMContext.
+
+    When smart_turn_enabled=True, wires LocalSmartTurnAnalyzerV3 as user turn
+    stop strategy so the ML model decides end-of-turn instead of silence timer.
+    """
+    if smart_turn_enabled:
+        try:
+            from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
+            from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
+            from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
+            from pipecat.turns.user_turn_strategies import UserTurnStrategies
+            from pipecat.processors.aggregators.llm_response_universal import LLMUserAggregatorParams
+
+            config = settings.smart_turn_config
+            logger.info(f"🧠 Smart Turn enabled: stop={config['stop_secs']}s, pre_speech={config['pre_speech_ms']}ms, max_dur={config['max_duration_secs']}s")
+
+            return LLMContextAggregatorPair(
+                LLMContext(),
+                user_params=LLMUserAggregatorParams(
+                    user_turn_strategies=UserTurnStrategies(
+                        stop=[
+                            TurnAnalyzerUserTurnStopStrategy(
+                                turn_analyzer=LocalSmartTurnAnalyzerV3(
+                                    params=SmartTurnParams(
+                                        stop_secs=config["stop_secs"],
+                                        pre_speech_ms=config["pre_speech_ms"],
+                                        max_duration_secs=config["max_duration_secs"],
+                                    ),
+                                    cpu_count=config["cpu_count"],
+                                )
+                            )
+                        ]
+                    ),
+                ),
+            )
+        except ImportError as e:
+            logger.warning(f"⚠️ Smart Turn not available ({e}), falling back to silence-based turn detection")
+            return LLMContextAggregatorPair(LLMContext())
+
     return LLMContextAggregatorPair(LLMContext())

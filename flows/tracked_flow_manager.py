@@ -76,6 +76,19 @@ class TrackedFlowManager(FlowManager):
             self.state.setdefault("node_history", []).append(node_id)
             span.set_attribute("node.history_length", len(self.state["node_history"]))
 
+            # Filter start_booking from globals during active booking to prevent
+            # LLM from restarting the booking flow mid-conversation
+            filtered = False
+            if self.state.get("booking_in_progress"):
+                original_globals = self._global_functions
+                self._global_functions = [
+                    f for f in self._global_functions
+                    if getattr(f, "name", "") != "start_booking"
+                ]
+                filtered = True
+                span.set_attribute("node.start_booking_filtered", True)
+                logger.debug(f"🔒 Filtered start_booking from globals (booking in progress)")
+
             try:
                 await super()._set_node(node_id, node_config)
                 span.set_attribute("node.transition_success", True)
@@ -86,6 +99,9 @@ class TrackedFlowManager(FlowManager):
                 span.set_attribute("node.transition_success", False)
                 logger.error(f"❌ Node transition failed: {previous_node} → {node_id}: {e}")
                 raise
+            finally:
+                if filtered:
+                    self._global_functions = original_globals
 
     async def _call_handler(
         self,

@@ -26,7 +26,7 @@ GLOBAL_FUNCTIONS = [
     # 1. Knowledge Base - General FAQ queries
     FlowsFunctionSchema(
         name="knowledge_base_new",
-        description="Search knowledge base for general info about services, exam preparations, required documents, forms, company policies, and booking process questions. Use for: 'Come si fa...', 'Cosa devo portare...', 'È obbligatorio...', 'Siete convenzionati...', 'Come prenotare?'",
+        description="ONLY when user explicitly asks an info question (e.g., 'Come si fa...', 'Cosa devo portare...', 'È obbligatorio...', 'Siete convenzionati...'). Do NOT call this when user is answering your question, selecting a service, confirming something, or providing personal info like name/address/date.",
         properties={
             "query": {
                 "type": "string",
@@ -40,7 +40,7 @@ GLOBAL_FUNCTIONS = [
     # 2. Competitive (Agonistic) Pricing
     FlowsFunctionSchema(
         name="get_competitive_pricing",
-        description="Get price for agonistic/competitive sports medical visit. Requires all 4 parameters: age, gender, sport name, and region.",
+        description="ONLY when user explicitly asks about agonistic/competitive sports visit pricing. Requires all 4 parameters: age, gender, sport name, and region. Do NOT call this when user is answering your question or providing personal info.",
         properties={
             "age": {
                 "type": "integer",
@@ -67,7 +67,7 @@ GLOBAL_FUNCTIONS = [
     # 3. Non-Competitive Pricing
     FlowsFunctionSchema(
         name="get_price_non_agonistic_visit",
-        description="Get price for non-agonistic/non-competitive sports medical visit. Only need to know if ECG under stress is required.",
+        description="ONLY when user explicitly asks about non-agonistic/non-competitive sports visit pricing. Do NOT call this when user is answering your question or providing personal info.",
         properties={
             "ecg_under_stress": {
                 "type": "boolean",
@@ -81,7 +81,7 @@ GLOBAL_FUNCTIONS = [
     # 4. Exam List by Visit Type
     FlowsFunctionSchema(
         name="get_exam_by_visit",
-        description="Get list of required exams for a specific visit type code. Valid codes: A1, A2, A3 (agonistic), B1, B2, B3, B4, B5 (non-agonistic).",
+        description="ONLY when user explicitly asks what exams are required for a visit type code. Valid codes: A1, A2, A3 (agonistic), B1, B2, B3, B4, B5 (non-agonistic). Do NOT call this when user is answering your question.",
         properties={
             "visit_type": {
                 "type": "string",
@@ -96,7 +96,7 @@ GLOBAL_FUNCTIONS = [
     # 5. Exam List by Sport
     FlowsFunctionSchema(
         name="get_exam_by_sport",
-        description="Get list of required exams for a specific sport. Use when patient asks 'Cosa prevede la visita per il calcio?'",
+        description="ONLY when user explicitly asks what exams are required for a specific sport (e.g., 'Cosa prevede la visita per il calcio?'). Do NOT call this when user is answering your question.",
         properties={
             "sport": {
                 "type": "string",
@@ -110,7 +110,7 @@ GLOBAL_FUNCTIONS = [
     # 6. Clinic Info (Call Graph)
     FlowsFunctionSchema(
         name="call_graph",
-        description="Get clinic information: opening hours, closures, blood collection times, available doctors. Include location in query.",
+        description="ONLY when user explicitly asks about clinic hours, closures, or doctors (e.g., 'Che orari avete?', 'Quando siete aperti?', 'Siete aperti sabato?'). Do NOT call this when user is providing a city/address as an answer to your question or confirming a center selection.",
         properties={
             "query": {
                 "type": "string",
@@ -124,7 +124,7 @@ GLOBAL_FUNCTIONS = [
     # 7. Request Transfer (NOW ASKS WHAT USER NEEDS FIRST)
     FlowsFunctionSchema(
         name="request_transfer",
-        description="When user asks for human operator, call this to ask what they need help with. DO NOT say you will transfer - instead say 'Dimmi di cosa hai bisogno, se non riesco ad aiutarti ti trasferirò a un operatore.' Agent tries to help first, transfers only if it fails.",
+        description="ONLY when user EXPLICITLY asks to speak to a human operator (e.g., 'voglio parlare con un operatore', 'passami un umano', 'operatore'). NEVER use this for booking actions, slot selections, confirmations, or any other purpose. If user is confirming a time, date, or service, use the node-specific function instead. Agent tries to help first, transfers only if it fails.",
         properties={
             "reason": {
                 "type": "string",
@@ -138,7 +138,7 @@ GLOBAL_FUNCTIONS = [
     # 8. Start Booking (TRANSITIONS)
     FlowsFunctionSchema(
         name="start_booking",
-        description="Start appointment booking flow. Use when patient wants to book an appointment: 'Voglio prenotare...', 'Prenota per me...', 'Devo prenotare...'",
+        description="ONLY when user explicitly asks to book a NEW appointment (e.g., 'Voglio prenotare...', 'Prenota per me...', 'Devo prenotare...'). Do NOT call this when a booking is already in progress or when user is answering your question.",
         properties={
             "service_request": {
                 "type": "string",

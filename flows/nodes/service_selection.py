@@ -19,7 +19,7 @@ def create_service_selection_node(services: List[HealthService] = None, search_t
     if services:
         # Format services for presentation (top 3)
         top_services = services[:3]
-        service_options = "\n".join([service.name for service in top_services])
+        service_options = "\n".join([f"{service.name} (UUID: {service.uuid})" for service in top_services])
         
         task_content = f"""I found these services for '{search_term}':
 
@@ -33,7 +33,15 @@ Choose one of these services, or tell me 'say the full service name' if none of 
         name="service_selection",
         role_messages=[{
             "role": "system",
-            "content": f"Help the patient choose from the top 3 search results, and also tell them that if none of these services match, they should say the full service name to refine the search. **CRITICAL: NEVER use 1., 2., 3., or numbers when listing services. List only the service names separated by commas or line breaks, without numerical prefixes.** Speak naturally like a human. {settings.language_config}"
+            "content": f"""Help the patient choose from the top 3 search results, and also tell them that if none of these services match, they should say the full service name to refine the search.
+
+**CRITICAL RULES:**
+- NEVER use 1., 2., 3., or numbers when listing services. List only the service names separated by commas or line breaks, without numerical prefixes.
+- When user selects a service (by name, position like "la prima/seconda/terza", or confirmation), you MUST call select_service with the correct UUID. NEVER skip the function call.
+- ONLY use select_service or refine_search at this step. NEVER call knowledge_base_new, call_graph, request_transfer, or any other function.
+- Do NOT ask follow-up questions (like address or city) until you have called select_service.
+
+Speak naturally like a human. {settings.language_config}"""
         }],
         task_messages=[{
             "role": "system",
@@ -105,32 +113,31 @@ def create_search_retry_node(error_message: str) -> NodeConfig:
 
 
 def create_search_processing_node(search_term: str, limit: int, tts_message: str) -> NodeConfig:
-    """Create a processing node that speaks immediately before performing search"""
-    from flows.handlers.service_handlers import perform_health_services_search_and_transition
+    """Create a processing node that runs service search via a single custom action.
+
+    The custom action handles TTS internally via queue_frame (fire-and-forget),
+    then runs the search, then transitions. No tts_say action = no
+    ActionFinishedFrame dependency that can be dropped by interruptions.
+    """
+    from flows.handlers.service_handlers import perform_search_action
 
     return NodeConfig(
         name="search_processing",
         pre_actions=[
             {
-                "type": "tts_say",
-                "text": tts_message
+                "type": "service_search",
+                "handler": perform_search_action,
+                "tts_text": tts_message,
             }
         ],
         role_messages=[{
             "role": "system",
-            "content": f"You are processing a health services search. Immediately call perform_search to execute the actual search. {settings.language_config}"
+            "content": f"Processing health services search for '{search_term}'. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",
-            "content": f"Now performing search for '{search_term}'. Please wait for results."
+            "content": f"Searching for '{search_term}'. Please wait for results."
         }],
-        functions=[
-            FlowsFunctionSchema(
-                name="perform_search",
-                handler=perform_health_services_search_and_transition,
-                description="Execute the actual health services search after TTS message",
-                properties={},
-                required=[]
-            )
-        ]
+        functions=[],
+        respond_immediately=False,
     )

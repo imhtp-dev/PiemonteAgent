@@ -73,8 +73,116 @@ async def search_final_centers_and_transition(args: FlowArgs, flow_manager: Flow
         }, create_error_node("Center search failed. Please try again.")
 
 
+async def perform_center_search_action(action: dict, flow_manager) -> None:
+    """Custom action handler: speak TTS, run center search, and transition directly.
+
+    Handles TTS internally via queue_frame instead of relying on tts_say action,
+    so there's no ActionFinishedFrame dependency that can be dropped by interruptions.
+    """
+    from pipecat.frames.frames import TTSSpeakFrame
+
+    try:
+        tts_text = action.get("tts_text", "")
+        if tts_text:
+            await flow_manager.task.queue_frame(TTSSpeakFrame(text=tts_text))
+        params = flow_manager.state.get("pending_center_search_params", {})
+        if not params:
+            from flows.nodes.completion import create_error_node
+            await flow_manager.set_node_from_config(
+                create_error_node("Missing center search parameters. Please start over.")
+            )
+            return
+
+        selected_services = params["selected_services"]
+        service_uuids = params["service_uuids"]
+        service_names = params["service_names"]
+        gender = params["gender"]
+        date_of_birth = params["date_of_birth"]
+        address = params["address"]
+
+        current_radius = flow_manager.state.get("current_search_radius", None)
+        dob_formatted = date_of_birth.replace("-", "")
+
+        import asyncio
+        loop = asyncio.get_event_loop()
+
+        radius_display = current_radius if current_radius else "22 (default)"
+        logger.info(f"🔍 Searching health centers with radius={radius_display}km for {len(service_uuids)} services in {address}")
+
+        def _search_centers():
+            result, error = retry_api_call(
+                api_func=cerba_api.get_health_centers,
+                max_retries=2,
+                retry_delay=1.0,
+                func_name=f"Health Center Search API (radius={radius_display}km)",
+                health_services=service_uuids,
+                gender=gender,
+                date_of_birth=dob_formatted,
+                address=address,
+                radius=current_radius
+            )
+            if error:
+                raise error
+            return result
+
+        try:
+            health_centers = await loop.run_in_executor(None, _search_centers)
+        except Exception as e:
+            logger.error(f"❌ API error during center search: {e}")
+            from flows.nodes.transfer import create_transfer_node
+            await flow_manager.set_node_from_config(create_transfer_node())
+            return
+
+        flow_manager.state["search_radius_used"] = current_radius or 22
+        logger.info(f"✅ Health center search completed: found {len(health_centers) if health_centers else 0} centers")
+
+        if health_centers:
+            flow_manager.state["final_health_centers"] = health_centers[:3]
+            flow_manager.state["expanded_search"] = current_radius is not None and current_radius > 22
+
+            from flows.nodes.booking import create_final_center_selection_node
+            await flow_manager.set_node_from_config(
+                create_final_center_selection_node(
+                    health_centers[:3],
+                    selected_services,
+                    expanded_search=flow_manager.state.get("expanded_search", False)
+                )
+            )
+        else:
+            services_text = ", ".join(service_names)
+
+            if current_radius is None:
+                logger.info(f"⚠️ No centers at default 22km, asking user to expand to 42km")
+                from flows.nodes.booking import create_ask_expand_radius_node
+                await flow_manager.set_node_from_config(
+                    create_ask_expand_radius_node(address, services_text, current_radius=22, next_radius=42)
+                )
+            elif current_radius == 42:
+                logger.info(f"⚠️ No centers at 42km, asking user to expand to 62km")
+                from flows.nodes.booking import create_ask_expand_radius_node
+                await flow_manager.set_node_from_config(
+                    create_ask_expand_radius_node(address, services_text, current_radius=42, next_radius=62)
+                )
+            else:
+                logger.warning(f"⚠️ No centers found even at maximum 62km radius")
+                from flows.nodes.booking import create_no_centers_node
+                await flow_manager.set_node_from_config(
+                    create_no_centers_node(address, services_text)
+                )
+
+    except Exception as e:
+        logger.error(f"Center search action error: {e}")
+        from flows.nodes.completion import create_error_node
+        await flow_manager.set_node_from_config(
+            create_error_node("Unable to find health centers. Please try again.")
+        )
+
+
 async def perform_center_search_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
     """Perform the actual center search after TTS message with interactive radius expansion
+
+    NOTE: This is the LEGACY handler used by LLM function calling pattern.
+    New code should use perform_center_search_action instead.
 
     Radius progression (interactive, user must confirm each expansion):
     - Default: 22km (API default, no radius param)
@@ -916,8 +1024,45 @@ async def search_slots_and_transition(args: FlowArgs, flow_manager: FlowManager)
         }, create_error_node("Slot search failed. Please try again.")
 
 
+async def perform_slot_search_action(action: dict, flow_manager) -> None:
+    """Custom action handler: speak TTS, run slot search, and transition directly.
+
+    Handles TTS internally via queue_frame instead of relying on tts_say action,
+    so there's no ActionFinishedFrame dependency that can be dropped by interruptions.
+    """
+    from pipecat.frames.frames import TTSSpeakFrame
+
+    try:
+        # Speak the TTS message directly (fire-and-forget into pipeline)
+        tts_text = action.get("tts_text", "")
+        if tts_text:
+            await flow_manager.task.queue_frame(TTSSpeakFrame(text=tts_text))
+
+        params = flow_manager.state.get("pending_slot_search_params", {})
+        if not params:
+            from flows.nodes.completion import create_error_node
+            await flow_manager.set_node_from_config(
+                create_error_node("Missing slot search parameters. Please start over.")
+            )
+            return
+
+        # Delegate to the existing handler logic, then transition with its result
+        result, next_node = await perform_slot_search_and_transition({}, flow_manager)
+        await flow_manager.set_node_from_config(next_node)
+
+    except Exception as e:
+        logger.error(f"Slot search action error: {e}")
+        from flows.nodes.completion import create_error_node
+        await flow_manager.set_node_from_config(
+            create_error_node("Failed to search slots. Please try again.")
+        )
+
+
 async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
-    """Perform the actual slot search after TTS message"""
+    """Perform the actual slot search after TTS message.
+
+    NOTE: Also called internally by perform_slot_search_action.
+    """
     try:
         # Get stored slot search parameters
         params = flow_manager.state.get("pending_slot_search_params", {})
@@ -1828,6 +1973,31 @@ async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: Flow
         logger.error(f"Booking creation error: {e}")
         from flows.nodes.completion import create_error_node
         return {"success": False, "message": "Failed to create booking"}, create_error_node("Booking creation failed. Please try again.")
+
+
+async def perform_slot_booking_action(action: dict, flow_manager) -> None:
+    """Custom action handler: speak TTS, run slot booking, and transition directly.
+
+    Handles TTS internally via queue_frame instead of relying on tts_say action,
+    so there's no ActionFinishedFrame dependency that can be dropped by interruptions.
+    """
+    from pipecat.frames.frames import TTSSpeakFrame
+
+    try:
+        tts_text = action.get("tts_text", "")
+        if tts_text:
+            await flow_manager.task.queue_frame(TTSSpeakFrame(text=tts_text))
+
+        # Delegate to existing handler
+        result, next_node = await perform_slot_booking_and_transition({}, flow_manager)
+        await flow_manager.set_node_from_config(next_node)
+
+    except Exception as e:
+        logger.error(f"Slot booking action error: {e}")
+        from flows.nodes.completion import create_error_node
+        await flow_manager.set_node_from_config(
+            create_error_node("Slot booking failed. Please try again.")
+        )
 
 
 async def handle_booking_modification(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:

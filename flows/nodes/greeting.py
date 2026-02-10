@@ -2,7 +2,7 @@
 Greeting and initial conversation nodes
 """
 
-from pipecat_flows import NodeConfig, FlowsFunctionSchema
+from pipecat_flows import NodeConfig, FlowsFunctionSchema, ContextStrategy, ContextStrategyConfig
 from flows.handlers.service_handlers import search_health_services_and_transition
 from config.settings import settings
 
@@ -59,5 +59,10 @@ When the user mentions ANY service name, immediately call search_health_services
                 required=["search_term"]
             )
         ],
-        respond_immediately=True  # Bot should start the conversation
+        respond_immediately=True,  # Bot should start the conversation
+        # Reset context to clear the router prompt — its aggressive instructions
+        # ("NEVER answer without calling a function", call_graph examples, etc.)
+        # cause global function misfires throughout booking. The greeting node is
+        # self-contained: service_request is passed via task_messages, not history.
+        context_strategy=ContextStrategyConfig(strategy=ContextStrategy.RESET),
     )

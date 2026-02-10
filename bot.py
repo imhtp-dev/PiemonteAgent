@@ -395,6 +395,12 @@ async def websocket_endpoint(websocket: WebSocket):
             raise
 
         # CREATE TRANSPORT
+        # When Smart Turn is enabled, lower VAD stop_secs so the ML model
+        # gets invoked quickly after silence starts (it decides real end-of-turn)
+        vad_stop_secs = 0.2 if settings.smart_turn_enabled else settings.vad_config["stop_secs"]
+        if settings.smart_turn_enabled:
+            logger.info(f"🧠 Smart Turn active: VAD stop_secs lowered to {vad_stop_secs}s")
+
         transport = FastAPIWebsocketTransport(
             websocket=websocket,
             params=FastAPIWebsocketParams(
@@ -404,11 +410,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 vad_analyzer=SileroVADAnalyzer(
                     params=VADParams(
                         start_secs=settings.vad_config["start_secs"],
-                        stop_secs=settings.vad_config["stop_secs"],
+                        stop_secs=vad_stop_secs,
                         min_volume=settings.vad_config["min_volume"]
                     )
                 ),
-                serializer=RawPCMSerializer(),  # EXACT SAME AS APP.PY
+                serializer=RawPCMSerializer(),
                 session_timeout=900,
                 )
             )
@@ -420,7 +426,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
         tts = create_tts_service()
         llm = create_llm_service()
-        context_aggregator = create_context_aggregator(llm)
+        context_aggregator = create_context_aggregator(llm, smart_turn_enabled=settings.smart_turn_enabled)
 
         # CREATE TRANSCRIPT PROCESSOR FOR RECORDING CONVERSATIONS
         transcript_processor = TranscriptProcessor()

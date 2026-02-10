@@ -155,6 +155,7 @@ Using your JSON structure:
 5. **TRACK EVERYTHING**: Keep a mental list of ALL services selected throughout the conversation (including optional services, specialist visits, prescriptions, etc.)
 6. **FOLLOW YES/NO STRICTLY**: If user says YES, go to "yes" branch. If NO, go to "no" branch. Never mix them up.
 7. **CALL finalize_services ONLY AT THE END**: When you reach "action": "save_cart" or a terminal node, include ALL tracked services in additional_services array
+8. **ONLY USE finalize_services**: The ONLY function you should call in this flow is finalize_services. NEVER call knowledge_base_new, call_graph, request_transfer, start_booking, or any other function. When user says yes or no, navigate the JSON tree and call finalize_services when you reach an end condition.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🎭 PRESENTATION STYLE
@@ -281,7 +282,9 @@ def create_final_center_selection_node(centers: List[HealthCenter], services: Li
 Center name → UUID mapping (for function calls only, NEVER speak UUIDs):
 {uuid_mapping}
 
-When patient selects a center, call select_center with the correct UUID. {settings.language_config}"""
+When patient selects or confirms a center, call select_center with the correct UUID.
+ONLY use select_center at this step. NEVER call request_transfer, knowledge_base_new, call_graph, start_booking, or any other function.
+When user says "va bene", "ok", confirms, or mentions a center name, that means they are selecting - call select_center. {settings.language_config}"""
         }],
         task_messages=[{
             "role": "system",
@@ -643,11 +646,6 @@ def create_slot_selection_node(slots: List[Dict], service: HealthService, is_cer
             morning_slots = [s for s in tomorrow_slots if 8 <= s['start_dt'].hour < 12]
             afternoon_slots = [s for s in tomorrow_slots if 12 <= s['start_dt'].hour < 19]
 
-            # Count other dates available
-            unique_dates = sorted(set(s['date_key'] for s in all_slots_sorted))
-            other_dates = [d for d in unique_dates if d != tomorrow_date_key]
-            other_dates_count = len(other_dates)
-
             # Build task content with LLM instructions
             task_content = f"""The available appointments for {service.name} are {len(tomorrow_slots)} slots for TOMORROW ({formatted_date}).
 
@@ -673,16 +671,13 @@ IMPORTANT INSTRUCTIONS:
    - "We have more afternoon slots available (total {len(afternoon_slots)} afternoon slots)"
    - Ask if they want to see the additional afternoon times"""
 
-            if other_dates_count > 0:
-                task_content += f"""
-4. Mention that appointments are also available on {other_dates_count} other date(s) if they prefer a different day
+            task_content += """
 
-Ask the user if any of the shown times work for them, or if they'd like to see more options."""
+If user doesn't want these times, ask which date they'd prefer and call search_different_date with that date."""
 
             logger.info(f"✅ FIRST AVAILABLE: Sending ALL {len(tomorrow_slots)} slots from TOMORROW ({tomorrow_date_key})")
             logger.info(f"🕐 Earliest time tomorrow: {earliest_time}")
             logger.info(f"📊 Morning slots: {len(morning_slots)}, Afternoon slots: {len(afternoon_slots)}")
-            logger.info(f"📊 Other dates available: {other_dates_count}")
 
         elif all_slots_sorted:
             # No slots today, show earliest available date with ALL its slots
@@ -715,7 +710,7 @@ IMPORTANT INSTRUCTIONS:
 
             task_content += """
 
-Ask the user if any of these times work for them, or if they'd like to see more options or search for a different date."""
+Ask the user if any of these times work. If not, ask which date they'd prefer and call search_different_date with that date."""
 
             logger.info(f"⚠️ FIRST AVAILABLE: No slots today, sending ALL {len(earliest_date_slots)} slots from earliest date ({earliest_date_key})")
             logger.info(f"🕐 Earliest time on {earliest_date_key}: {earliest_time}")
@@ -932,10 +927,17 @@ Ask the user which time works best for them."""
 ⚡ UUID MAPPING for function calls (Italian time → UUID):
 {slot_context.get('italian_to_uuid_map', {})}
 
-🚨 WHEN USER SELECTS A TIME:
-1. User says Italian time (e.g., "otto e trenta" or "le otto e mezza")
+🚨 WHEN USER SELECTS OR CONFIRMS A TIME:
+1. User says Italian time (e.g., "otto e trenta", "le otto e mezza", "va bene alle sedici e venti")
 2. Match to closest time in the mapping above
-3. Use the UUID as providing_entity_availability_uuid
+3. Call select_slot with the UUID as providing_entity_availability_uuid
+4. NEVER call request_transfer, start_booking, or any other global function when user is selecting/confirming a time slot
+
+🚨 WHEN USER DOESN'T WANT THESE TIMES:
+- Ask which specific date they'd prefer
+- Once they give a date, call search_different_date with that date
+- NEVER say "let me check" or "I'll look for other dates" without calling a function
+- You MUST always call a function to proceed. Never just generate text promising to do something.
 
 - Never mention prices, UUIDs, or technical details
 - Be conversational and human
@@ -1230,66 +1232,64 @@ When user confirms/cancels/changes, call confirm_booking_summary function. DO NO
     )
 
 def create_center_search_processing_node(address: str, tts_message: str) -> NodeConfig:
-    """Create a processing node that speaks immediately before performing center search"""
-    from flows.handlers.booking_handlers import perform_center_search_and_transition
+    """Create a processing node that runs center search via a single custom action.
+
+    The custom action handles TTS internally via queue_frame (fire-and-forget),
+    then runs the API call, then transitions. No tts_say action = no
+    ActionFinishedFrame dependency that can be dropped by interruptions.
+    """
+    from flows.handlers.booking_handlers import perform_center_search_action
 
     return NodeConfig(
         name="center_search_processing",
         pre_actions=[
             {
-                "type": "tts_say",
-                "text": tts_message
+                "type": "center_search",
+                "handler": perform_center_search_action,
+                "tts_text": tts_message,
             }
         ],
         role_messages=[{
             "role": "system",
-            "content": f"You are processing health center search in {address}. Immediately call perform_center_search to execute the actual search. {settings.language_config}"
+            "content": f"Processing health center search in {address}. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",
-            "content": f"Now searching for health centers in {address} that provide all selected services. Please wait."
+            "content": f"Searching for health centers in {address}. Please wait."
         }],
-        functions=[
-            FlowsFunctionSchema(
-                name="perform_center_search",
-                handler=perform_center_search_and_transition,
-                description="Execute the actual center search after TTS message",
-                properties={},
-                required=[]
-            )
-        ]
+        functions=[],
+        respond_immediately=False,
     )
 
 
 def create_slot_search_processing_node(service_name: str, tts_message: str) -> NodeConfig:
-    """Create a processing node that speaks immediately before performing slot search"""
-    from flows.handlers.booking_handlers import perform_slot_search_and_transition
+    """Create a processing node that runs slot search via a single custom action.
+
+    The custom action handles TTS internally via queue_frame (fire-and-forget),
+    then runs the API call, then transitions. No tts_say action = no
+    ActionFinishedFrame dependency that can be dropped by interruptions.
+    """
+    from flows.handlers.booking_handlers import perform_slot_search_action
 
     return NodeConfig(
         name="slot_search_processing",
         pre_actions=[
             {
-                "type": "tts_say",
-                "text": tts_message
+                "type": "slot_search",
+                "handler": perform_slot_search_action,
+                "tts_text": tts_message,
             }
         ],
         role_messages=[{
             "role": "system",
-            "content": f"You are processing slot search for {service_name}. Immediately call perform_slot_search to execute the actual search. {settings.language_config}"
+            "content": f"Processing slot search for {service_name}. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",
-            "content": f"Now searching for available appointment slots for {service_name}. Please wait."
+            "content": f"Searching for available slots for {service_name}. Please wait."
         }],
-        functions=[
-            FlowsFunctionSchema(
-                name="perform_slot_search",
-                handler=perform_slot_search_and_transition,
-                description="Execute the actual slot search after TTS message",
-                properties={},
-                required=[]
-            )
-        ]
+        functions=[],
+        respond_immediately=False,
     )
 
 
@@ -1329,32 +1329,31 @@ def create_automatic_slot_search_node(service_name: str, tts_message: str) -> No
 
 
 def create_slot_booking_processing_node(service_name: str, tts_message: str) -> NodeConfig:
-    """Create a processing node that speaks immediately before performing slot booking"""
-    from flows.handlers.booking_handlers import perform_slot_booking_and_transition
+    """Create a processing node that runs slot booking via a single custom action.
+
+    The custom action handles TTS internally via queue_frame (fire-and-forget),
+    then runs the booking, then transitions. No tts_say action = no
+    ActionFinishedFrame dependency that can be dropped by interruptions.
+    """
+    from flows.handlers.booking_handlers import perform_slot_booking_action
 
     return NodeConfig(
         name="slot_booking_processing",
         pre_actions=[
             {
-                "type": "tts_say",
-                "text": tts_message
+                "type": "slot_booking",
+                "handler": perform_slot_booking_action,
+                "tts_text": tts_message,
             }
         ],
         role_messages=[{
             "role": "system",
-            "content": f"You are processing slot booking for {service_name}. Immediately call perform_slot_booking to execute the actual booking. {settings.language_config}"
+            "content": f"Processing slot booking for {service_name}. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",
-            "content": f"Now booking the selected time slot for {service_name}. Please wait for confirmation."
+            "content": f"Booking the selected time slot for {service_name}. Please wait."
         }],
-        functions=[
-            FlowsFunctionSchema(
-                name="perform_slot_booking",
-                handler=perform_slot_booking_and_transition,
-                description="Execute the actual slot booking after TTS message",
-                properties={},
-                required=[]
-            )
-        ]
+        functions=[],
+        respond_immediately=False,
     )
