@@ -238,11 +238,12 @@ services:
           memory: 256M
           cpus: '0.1'
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6006/healthz"]
+      # Phoenix uses distroless image (no curl/wget), use Python for healthcheck
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:6006/healthz')"]
       interval: 15s
       timeout: 10s
-      retries: 3
-      start_period: 15s
+      retries: 5
+      start_period: 30s
     networks:
       - pipecat-network
 
