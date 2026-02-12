@@ -1187,7 +1187,7 @@ def create_booking_summary_confirmation_node(selected_services: List[HealthServi
         else:
             logger.info(f"✅ Using stored price for {service_name}: {service_cost}€")
 
-        services_text.append(f"• {service_name} il {formatted_date} alle {formatted_time} - {int(service_cost)} euro")
+        services_text.append(f"• {service_name} il {formatted_date} alle {formatted_time} - {float(service_cost):.2f} euro")
 
     services_summary = "\n".join(services_text)
 
@@ -1202,7 +1202,7 @@ def create_booking_summary_confirmation_node(selected_services: List[HealthServi
 **Health Center:**
 {selected_center.name}
 
-**Total Cost:** {int(total_cost)} euro{membership_text}
+**Total Cost:** {float(total_cost):.2f} euro{membership_text}
 
 Would you like to proceed with this booking? If yes, I'll just need to collect some personal information to complete your appointment. If you'd like to change the time slot, I can show you other available times for the same service and date."""
 
@@ -1213,7 +1213,9 @@ Would you like to proceed with this booking? If yes, I'll just need to collect s
             "role": "system",
             "content": f"""Present EXACTLY the booking summary below. DO NOT hallucinate times/dates/prices.
 
-Date/time formatting: Remove leading zeros ("07:30"→"7:30"), times ending :00 say "o'clock".
+Date/time formatting: Remove leading zeros ("07:30"→"7:30"), times ending :00 say "in punto" (e.g. "7 in punto").
+
+CRITICAL ITALIAN RULES: ALWAYS say "più" (NOT "Plus"), "in punto" (NOT "o'clock"), "euro" (NOT "euros").
 
 When user confirms/cancels/changes, call confirm_booking_summary function. DO NOT say "booking confirmed" - booking happens LATER. {settings.language_config}"""
         }],

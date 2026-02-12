@@ -132,8 +132,8 @@ class DebugAudioBufferProcessor:
 # Daily transport imports
 from pipecat.transports.daily.transport import DailyParams, DailyTransport
 
-# OpenTelemetry & LangFuse tracing
-from config.telemetry import setup_tracing, get_tracer, get_conversation_tokens, flush_traces, update_trace_io
+# OpenTelemetry & Phoenix tracing
+from config.telemetry import setup_tracing, get_tracer, get_conversation_usage, flush_traces, update_trace_metadata
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
@@ -466,12 +466,11 @@ class DailyHealthcareFlowTester:
                 enable_usage_metrics=True,  # Enable metrics for performance monitoring
                 enable_metrics=True,
             ),
-            enable_tracing=True,  # ✅ Enable OpenTelemetry tracing (LangFuse)
-            conversation_id=self.session_id,  # Use session_id as conversation ID for trace correlation
-            # ✅ Add langfuse.session.id to map our session_id to LangFuse sessions
+            enable_tracing=True,  # Enable OpenTelemetry tracing (Phoenix)
+            conversation_id=self.session_id,
             additional_span_attributes={
-                "langfuse.session.id": self.session_id,
-                "langfuse.user.id": self.caller_phone or "daily_test_user",
+                "session.id": self.session_id,
+                "user.id": self.caller_phone or "daily_test_user",
             },
             idle_timeout_secs=600  # 10 minutes - allows for long API calls (sorting, slot search)
         )
@@ -600,10 +599,9 @@ class DailyHealthcareFlowTester:
                 logger.info("🔵 Saving to Supabase...")
                 call_extractor = self.flow_manager.state.get("call_extractor")
                 if call_extractor:
-                    # Query LangFuse for token usage + update trace I/O
-                    token_data = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+                    # Query Phoenix for token usage + set trace metadata
+                    usage_data = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "tts_characters": 0}
                     if os.getenv("ENABLE_TRACING", "false").lower() == "true":
-                        # Extract transcript for trace I/O (needed by both steps below)
                         transcript = call_extractor.transcript or []
                         first_user_msg = None
                         last_assistant_msg = None
@@ -614,32 +612,31 @@ class DailyHealthcareFlowTester:
                                 last_assistant_msg = entry.get("content", "")
 
                         # STEP 1: Set input/output on conversation span BEFORE it closes
-                        # LangFuse reads these attributes from the root span
                         try:
                             conv_span = getattr(getattr(self.task, '_turn_trace_observer', None), '_conversation_span', None)
                             if conv_span and hasattr(conv_span, 'set_attribute'):
                                 if first_user_msg:
-                                    conv_span.set_attribute("langfuse.observation.input", first_user_msg[:1000])
+                                    conv_span.set_attribute("input.value", first_user_msg[:1000])
                                 if last_assistant_msg:
-                                    conv_span.set_attribute("langfuse.observation.output", last_assistant_msg[:1000])
-                                logger.info("📝 Set input/output on conversation span")
+                                    conv_span.set_attribute("output.value", last_assistant_msg[:1000])
+                                logger.info("Set input/output on conversation span")
                             else:
-                                logger.warning("⚠️ Conversation span not accessible")
+                                logger.warning("Conversation span not accessible")
                         except Exception as span_err:
-                            logger.warning(f"⚠️ Could not set conversation span attrs: {span_err}")
+                            logger.warning(f"Could not set conversation span attrs: {span_err}")
 
-                        # STEP 2: Flush traces and get token counts from LangFuse
+                        # STEP 2: Flush traces and get usage metrics from Phoenix
                         try:
                             await asyncio.sleep(1)
                             flush_traces()
-                            await asyncio.sleep(5)
-                            token_data = await get_conversation_tokens(self.session_id)
-                            call_extractor.llm_token_count = token_data["total_tokens"]
-                            logger.success(f"✅ LangFuse tokens: {token_data['total_tokens']}")
+                            await asyncio.sleep(2)  # Phoenix local — fast indexing
+                            usage_data = await get_conversation_usage(self.session_id)
+                            call_extractor.llm_token_count = usage_data["total_tokens"]
+                            logger.success(f"Phoenix usage: LLM={usage_data['total_tokens']} tokens, TTS={usage_data['tts_characters']} chars")
                         except Exception as e:
-                            logger.error(f"❌ Failed to retrieve tokens from LangFuse: {e}")
+                            logger.error(f"Failed to retrieve usage from Phoenix: {e}")
 
-                        # STEP 3: Update trace name, tags, metadata via SDK (always runs)
+                        # STEP 3: Set call metadata as span attributes + log
                         try:
                             flow_state = self.flow_manager.state or {}
                             if flow_state.get("transfer_requested"):
@@ -652,6 +649,17 @@ class DailyHealthcareFlowTester:
                                 call_type = "info"
 
                             caller_phone = flow_state.get("caller_phone_from_talkdesk", "") or self.caller_phone
+                            duration = round(call_extractor._calculate_duration() or 0, 1)
+
+                            # Set call metadata on conversation span
+                            conv_span = getattr(getattr(self.task, '_turn_trace_observer', None), '_conversation_span', None)
+                            if conv_span and hasattr(conv_span, 'set_attribute'):
+                                conv_span.set_attribute("call.type", call_type)
+                                conv_span.set_attribute("call.outcome", call_type)
+                                conv_span.set_attribute("call.last_node", flow_state.get("current_node", "unknown"))
+                                conv_span.set_attribute("call.duration_seconds", duration)
+                                conv_span.set_attribute("call.total_tokens", usage_data.get("total_tokens", 0))
+                                conv_span.set_attribute("call.tts_characters", usage_data.get("tts_characters", 0))
 
                             if first_user_msg or last_assistant_msg:
                                 trace_metadata = {
@@ -659,24 +667,25 @@ class DailyHealthcareFlowTester:
                                     "last_node": flow_state.get("current_node", "unknown"),
                                     "node_history": flow_state.get("node_history", []),
                                     "failure_count": flow_state.get("failure_tracker", {}).get("count", 0),
-                                    "duration_seconds": round(call_extractor._calculate_duration() or 0, 1),
-                                    "llm_total_tokens": token_data.get("total_tokens", 0),
+                                    "duration_seconds": duration,
+                                    "llm_total_tokens": usage_data.get("total_tokens", 0),
+                                    "tts_characters": usage_data.get("tts_characters", 0),
                                 }
 
                                 try:
                                     from utils.cost_tracker import calculate_call_cost
                                     cost = calculate_call_cost(
-                                        llm_input_tokens=token_data.get("prompt_tokens", 0),
-                                        llm_output_tokens=token_data.get("completion_tokens", 0),
-                                        tts_characters=0,
-                                        call_duration_seconds=trace_metadata["duration_seconds"],
+                                        llm_input_tokens=usage_data.get("prompt_tokens", 0),
+                                        llm_output_tokens=usage_data.get("completion_tokens", 0),
+                                        tts_characters=usage_data.get("tts_characters", 0),
+                                        call_duration_seconds=duration,
                                         stt_provider=settings.stt_provider,
                                     )
                                     trace_metadata.update(cost.to_dict())
                                 except Exception as cost_err:
-                                    logger.warning(f"⚠️ Cost calculation failed: {cost_err}")
+                                    logger.warning(f"Cost calculation failed: {cost_err}")
 
-                                await update_trace_io(
+                                await update_trace_metadata(
                                     self.session_id,
                                     first_user_msg or "",
                                     last_assistant_msg or "",
@@ -685,7 +694,7 @@ class DailyHealthcareFlowTester:
                                     metadata=trace_metadata
                                 )
                         except Exception as io_err:
-                            logger.error(f"❌ Failed to update trace I/O: {io_err}")
+                            logger.error(f"Failed to update trace metadata: {io_err}")
 
                     # Save recordings if enabled (BEFORE call_extractor.save_to_database)
                     if self.recording_manager and self.audiobuffer:
@@ -874,7 +883,7 @@ class DailyHealthcareFlowTester:
         #     except Exception as e:
         #         logger.warning(f"⚠️ Could not delete room: {e}")
 
-        # Flush OpenTelemetry traces to Langfuse before exit
+        # Flush OpenTelemetry traces to Phoenix before exit
         try:
             flush_traces()
         except Exception as e:
@@ -968,15 +977,15 @@ async def main():
     logger.info("🎯 Starting Daily Healthcare Flow Testing...")
     logger.info(f"📍 Start Node: {args.start_node}")
 
-    # Initialize OpenTelemetry tracing (LangFuse)
+    # Initialize OpenTelemetry tracing (Phoenix)
     tracer = setup_tracing(
         service_name="pipecat-healthcare-daily-test",
         enable_console=False
     )
     if tracer:
-        logger.success("✅ LangFuse tracing initialized for Daily voice testing")
+        logger.success("Phoenix tracing initialized for Daily voice testing")
     else:
-        logger.warning("⚠️ LangFuse tracing disabled (set ENABLE_TRACING=true in .env to enable)")
+        logger.warning("Tracing disabled (set ENABLE_TRACING=true in .env to enable)")
 
     # Log simulated caller data if provided
     if args.caller_phone or args.patient_dob:

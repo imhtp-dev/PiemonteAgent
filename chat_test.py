@@ -65,8 +65,8 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 
-# OpenTelemetry for LangFuse tracing
-from config.telemetry import setup_tracing, get_tracer, get_conversation_tokens, flush_traces
+# OpenTelemetry for Phoenix tracing
+from config.telemetry import setup_tracing, get_tracer, get_conversation_usage, flush_traces
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
@@ -336,7 +336,7 @@ async def lifespan(app: FastAPI):
     await db.connect()
     logger.success("✅ Supabase database initialized for chat_test.py")
 
-    # Initialize OpenTelemetry tracing (LangFuse)
+    # Initialize OpenTelemetry tracing (Phoenix)
     tracer = setup_tracing(
         service_name="pipecat-healthcare-chat-test",
         enable_console=False
@@ -1073,22 +1073,21 @@ async def websocket_endpoint(websocket: WebSocket):
         log_file = session_call_logger.start_call_logging(session_id, "text_chat_test")
         logger.info(f"📁 Text chat logging started: {log_file}")
 
-        # Create pipeline task with LangFuse tracing enabled
+        # Create pipeline task with tracing enabled
         # CRITICAL: Disable idle_timeout for text-only chat to prevent premature disconnections
         # In text mode, there are no BotSpeakingFrame events, so idle detection triggers incorrectly
         task = PipelineTask(
             pipeline,
             params=PipelineParams(
-                allow_interruptions=False,  # Not needed for text
-                enable_transcriptions=False,  # No audio transcription
-                enable_usage_metrics=True,  # Keep metrics enabled for performance monitoring
+                allow_interruptions=False,
+                enable_transcriptions=False,
+                enable_usage_metrics=True,
             ),
-            enable_tracing=True,  # ✅ Enable OpenTelemetry tracing (LangFuse)
-            conversation_id=session_id,  # Use session_id as conversation ID for trace correlation
-            # ✅ Add langfuse.session.id to map our session_id to LangFuse sessions
+            enable_tracing=True,  # Enable OpenTelemetry tracing (Phoenix)
+            conversation_id=session_id,
             additional_span_attributes={
-                "langfuse.session.id": session_id,
-                "langfuse.user.id": "chat_test_user",
+                "session.id": session_id,
+                "user.id": "chat_test_user",
             },
             cancel_on_idle_timeout=False  # MUST be direct parameter to PipelineTask, not in params!
         )
@@ -1231,21 +1230,18 @@ async def websocket_endpoint(websocket: WebSocket):
                     logger.info("🔵 Saving to Supabase...")
                     call_extractor = flow_manager.state.get("call_extractor")
                     if call_extractor:
-                        # Query LangFuse for token usage before saving
+                        # Query Phoenix for token usage before saving
                         if os.getenv("ENABLE_TRACING", "false").lower() == "true":
-                            logger.info("📊 Querying LangFuse for token usage...")
+                            logger.info("Querying Phoenix for usage metrics...")
                             try:
-                                logger.info("⏳ Waiting 1 second for spans to be queued...")
                                 await asyncio.sleep(1)
-                                logger.info("🔄 Flushing traces to LangFuse...")
                                 flush_traces()
-                                logger.info("⏳ Waiting 5 seconds for LangFuse to index traces...")
-                                await asyncio.sleep(5)
-                                token_data = await get_conversation_tokens(session_id)
-                                call_extractor.llm_token_count = token_data["total_tokens"]
-                                logger.success(f"✅ Updated call_extractor with LangFuse tokens: {token_data['total_tokens']}")
+                                await asyncio.sleep(2)  # Phoenix local — fast indexing
+                                usage_data = await get_conversation_usage(session_id)
+                                call_extractor.llm_token_count = usage_data["total_tokens"]
+                                logger.success(f"Phoenix usage: LLM={usage_data['total_tokens']} tokens, TTS={usage_data['tts_characters']} chars")
                             except Exception as e:
-                                logger.error(f"❌ Failed to retrieve tokens from LangFuse: {e}")
+                                logger.error(f"Failed to retrieve usage from Phoenix: {e}")
 
                         # Mark call end time and save to Supabase
                         call_extractor.end_call()

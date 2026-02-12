@@ -45,13 +45,13 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 
-# OpenTelemetry & LangFuse
+# OpenTelemetry & Phoenix
 from config.telemetry import (
     setup_tracing,
     get_tracer,
-    get_conversation_tokens,
+    get_conversation_usage,
     flush_traces,
-    update_trace_io,
+    update_trace_metadata,
 )
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -221,7 +221,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Initialize OpenTelemetry tracing (LangFuse)
+# Initialize OpenTelemetry tracing (Phoenix)
 tracer = setup_tracing(
     service_name="pipecat-healthcare-production",
     enable_console=False
@@ -526,13 +526,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 enable_usage_metrics=True,  # Keep metrics enabled for performance monitoring
                 enable_metrics=True,
             ),
-            enable_tracing=True,  # ✅ Enable OpenTelemetry tracing (LangFuse)
-            conversation_id=session_id,  # Use session_id as conversation ID for trace correlation
-            # ✅ Add langfuse.session.id to map our session_id to LangFuse sessions
-            # This allows us to query traces by session_id in the LangFuse API
+            enable_tracing=True,  # Enable OpenTelemetry tracing (Phoenix)
+            conversation_id=session_id,
             additional_span_attributes={
-                "langfuse.session.id": session_id,
-                "langfuse.user.id": caller_phone or "unknown",
+                "session.id": session_id,
+                "user.id": caller_phone or "unknown",
             },
             idle_timeout_secs=600  # 10 minutes - allows for long API calls (sorting, slot search)
         )
@@ -709,8 +707,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 import traceback
                 traceback.print_exc()
 
-            # Set LangFuse input/output on conversation span BEFORE task.cancel() closes it
-            # This is the only window where the span is still open
+            # Set input/output on conversation span BEFORE task.cancel() closes it
             try:
                 call_extractor = flow_manager.state.get("call_extractor")
                 if call_extractor and os.getenv("ENABLE_TRACING", "false").lower() == "true":
@@ -726,12 +723,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     conv_span = getattr(getattr(task, '_turn_trace_observer', None), '_conversation_span', None)
                     if conv_span and hasattr(conv_span, 'set_attribute'):
                         if first_user_msg:
-                            conv_span.set_attribute("langfuse.observation.input", first_user_msg[:1000])
+                            conv_span.set_attribute("input.value", first_user_msg[:1000])
                         if last_assistant_msg:
-                            conv_span.set_attribute("langfuse.observation.output", last_assistant_msg[:1000])
-                        logger.info("📝 Set langfuse input/output on conversation span")
+                            conv_span.set_attribute("output.value", last_assistant_msg[:1000])
+                        logger.info("Set input/output on conversation span")
             except Exception as e:
-                logger.warning(f"⚠️ Could not set conversation span attrs: {e}")
+                logger.warning(f"Could not set conversation span attrs: {e}")
 
             # Clear transcript session and cleanup
             cleanup_transcript_manager(session_id)
@@ -744,34 +741,30 @@ async def websocket_endpoint(websocket: WebSocket):
 
         @transport.event_handler("on_session_timeout")
         async def on_session_timeout(transport_obj, ws):
-            logger.warning(f"⏱️ Session timeout: {session_id}")
+            logger.warning(f"Session timeout: {session_id}")
 
             # Extract and store ALL call data to Supabase (unified storage)
             try:
                 current_agent = flow_manager.state.get("current_agent", "unknown")
-                logger.info(f"📊 Extracting call data for timed-out session: {session_id} | Agent: {current_agent}")
+                logger.info(f"Extracting call data for timed-out session: {session_id} | Agent: {current_agent}")
 
-                # ✅ UNIFIED: All calls go to Supabase via call_data_extractor
-                logger.info("💾 Saving call data to Supabase (unified storage - timeout)")
+                logger.info("Saving call data to Supabase (unified storage - timeout)")
 
                 call_extractor = flow_manager.state.get("call_extractor")
                 if call_extractor:
                     # Save recordings if enabled (BEFORE call_extractor.save_to_database)
                     if recording_manager and audiobuffer:
                         try:
-                            # Reset event before stopping
                             if audio_data_received:
                                 audio_data_received.clear()
 
-                            # Stop recording - triggers on_track_audio_data event
                             await audiobuffer.stop_recording()
 
-                            # CRITICAL: Wait for async event handler to complete
                             if audio_data_received:
                                 try:
                                     await asyncio.wait_for(audio_data_received.wait(), timeout=2.0)
                                 except asyncio.TimeoutError:
-                                    logger.warning("🎙️ Timeout waiting for audio data (timeout handler)")
+                                    logger.warning("Timeout waiting for audio data (timeout handler)")
 
                             recording_urls = await recording_manager.save_recordings()
                             if recording_urls:
@@ -779,29 +772,26 @@ async def websocket_endpoint(websocket: WebSocket):
                                 call_extractor.recording_url_user = recording_urls.get("user_url")
                                 call_extractor.recording_url_bot = recording_urls.get("bot_url")
                                 call_extractor.recording_duration = recording_manager.get_duration_seconds()
-                                logger.success(f"🎙️ Recordings saved (timeout) ({call_extractor.recording_duration:.1f}s)")
+                                logger.success(f"Recordings saved (timeout) ({call_extractor.recording_duration:.1f}s)")
                         except Exception as e:
-                            logger.error(f"❌ Failed to save recordings (timeout): {e}")
+                            logger.error(f"Failed to save recordings (timeout): {e}")
 
-                    # ✅ CRITICAL: Mark call end time before saving
                     call_extractor.end_call()
                     success = await call_extractor.save_to_database(flow_manager.state)
                     if success:
-                        logger.success(f"✅ Call data saved to Supabase (timeout): {session_id}")
-
-                        # Report to Talkdesk (only if not transferred to human operator)
+                        logger.success(f"Call data saved to Supabase (timeout): {session_id}")
                         await report_to_talkdesk(flow_manager, call_extractor)
                     else:
-                        logger.error(f"❌ Failed to save call data to Supabase (timeout): {session_id}")
+                        logger.error(f"Failed to save call data to Supabase (timeout): {session_id}")
                 else:
-                    logger.error("❌ No call_extractor found in flow_manager.state (timeout)")
+                    logger.error("No call_extractor found in flow_manager.state (timeout)")
 
             except Exception as e:
-                logger.error(f"❌ Error during timeout call data extraction: {e}")
+                logger.error(f"Error during timeout call data extraction: {e}")
                 import traceback
                 traceback.print_exc()
 
-            # Set LangFuse input/output on conversation span BEFORE task.cancel()
+            # Set input/output on conversation span BEFORE task.cancel()
             try:
                 call_extractor = flow_manager.state.get("call_extractor")
                 if call_extractor and os.getenv("ENABLE_TRACING", "false").lower() == "true":
@@ -817,12 +807,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     conv_span = getattr(getattr(task, '_turn_trace_observer', None), '_conversation_span', None)
                     if conv_span and hasattr(conv_span, 'set_attribute'):
                         if first_user_msg:
-                            conv_span.set_attribute("langfuse.observation.input", first_user_msg[:1000])
+                            conv_span.set_attribute("input.value", first_user_msg[:1000])
                         if last_assistant_msg:
-                            conv_span.set_attribute("langfuse.observation.output", last_assistant_msg[:1000])
-                        logger.info("📝 Set langfuse input/output on conversation span (timeout)")
+                            conv_span.set_attribute("output.value", last_assistant_msg[:1000])
+                        logger.info("Set input/output on conversation span (timeout)")
             except Exception as e:
-                logger.warning(f"⚠️ Could not set conversation span attrs (timeout): {e}")
+                logger.warning(f"Could not set conversation span attrs (timeout): {e}")
 
             # Clear transcript session and cleanup
             cleanup_transcript_manager(session_id)
@@ -849,7 +839,7 @@ async def websocket_endpoint(websocket: WebSocket):
         import traceback
         traceback.print_exc()
 
-        # ✅ Record error to LangFuse for debugging visibility
+        # Record error to trace for debugging visibility
         from utils.tracing import trace_error
         trace_error(
             error=e,
@@ -873,25 +863,21 @@ async def websocket_endpoint(websocket: WebSocket):
 
             call_extractor = flow_manager.state.get("call_extractor")
             if call_extractor:
-                # ✅ Query LangFuse for token usage + update trace metadata
-                token_data = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+                # Query Phoenix for token usage + set call metadata as span attributes
+                usage_data = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "tts_characters": 0}
                 if os.getenv("ENABLE_TRACING", "false").lower() == "true":
-                    # Note: conversation span input/output was already set in on_client_disconnected
-                    # This block handles: token retrieval + trace name/tags/metadata update
-
-                    # STEP 1: Flush and get token counts
+                    # STEP 1: Flush and get usage metrics (LLM tokens + TTS chars)
                     try:
                         await asyncio.sleep(2)
                         flush_traces()
-                        # Production LangFuse cloud needs more indexing time
-                        await asyncio.sleep(10)
-                        token_data = await get_conversation_tokens(session_id)
-                        call_extractor.llm_token_count = token_data["total_tokens"]
-                        logger.success(f"✅ LangFuse tokens: {token_data['total_tokens']}")
+                        await asyncio.sleep(2)  # Phoenix local — fast indexing
+                        usage_data = await get_conversation_usage(session_id)
+                        call_extractor.llm_token_count = usage_data["total_tokens"]
+                        logger.success(f"Phoenix usage: LLM={usage_data['total_tokens']} tokens, TTS={usage_data['tts_characters']} chars")
                     except Exception as e:
-                        logger.error(f"❌ Failed to retrieve tokens from LangFuse: {e}")
+                        logger.error(f"Failed to retrieve usage from Phoenix: {e}")
 
-                    # STEP 2: Update trace name, tags, metadata (always runs)
+                    # STEP 2: Set call metadata as span attributes + log
                     try:
                         transcript = call_extractor.transcript or []
                         first_user_msg = None
@@ -913,41 +899,52 @@ async def websocket_endpoint(websocket: WebSocket):
                             call_type = "info"
 
                         caller_phone = flow_state.get("caller_phone_from_talkdesk", "")
+                        duration = round(call_extractor._calculate_duration() or 0, 1)
 
-                        if first_user_msg or last_assistant_msg:
-                            trace_metadata = {
-                                "outcome": call_type,
-                                "last_node": flow_state.get("current_node", "unknown"),
-                                "node_history": flow_state.get("node_history", []),
-                                "failure_count": flow_state.get("failure_tracker", {}).get("count", 0),
-                                "duration_seconds": round(call_extractor._calculate_duration() or 0, 1),
-                                "stt_provider": settings.stt_provider,
-                                "llm_total_tokens": token_data.get("total_tokens", 0),
-                            }
+                        # Set call metadata on conversation span (visible in Phoenix)
+                        conv_span = getattr(getattr(task, '_turn_trace_observer', None), '_conversation_span', None)
+                        if conv_span and hasattr(conv_span, 'set_attribute'):
+                            conv_span.set_attribute("call.type", call_type)
+                            conv_span.set_attribute("call.outcome", call_type)
+                            conv_span.set_attribute("call.last_node", flow_state.get("current_node", "unknown"))
+                            conv_span.set_attribute("call.duration_seconds", duration)
+                            conv_span.set_attribute("call.total_tokens", usage_data.get("total_tokens", 0))
+                            conv_span.set_attribute("call.tts_characters", usage_data.get("tts_characters", 0))
 
-                            try:
-                                from utils.cost_tracker import calculate_call_cost
-                                cost = calculate_call_cost(
-                                    llm_input_tokens=token_data.get("prompt_tokens", 0),
-                                    llm_output_tokens=token_data.get("completion_tokens", 0),
-                                    tts_characters=0,
-                                    call_duration_seconds=trace_metadata["duration_seconds"],
-                                    stt_provider=settings.stt_provider,
-                                )
-                                trace_metadata.update(cost.to_dict())
-                            except Exception as cost_err:
-                                logger.warning(f"⚠️ Cost calculation failed: {cost_err}")
+                        trace_metadata = {
+                            "outcome": call_type,
+                            "last_node": flow_state.get("current_node", "unknown"),
+                            "node_history": flow_state.get("node_history", []),
+                            "failure_count": flow_state.get("failure_tracker", {}).get("count", 0),
+                            "duration_seconds": duration,
+                            "stt_provider": settings.stt_provider,
+                            "llm_total_tokens": usage_data.get("total_tokens", 0),
+                            "tts_characters": usage_data.get("tts_characters", 0),
+                        }
 
-                            await update_trace_io(
-                                session_id,
-                                first_user_msg or "",
-                                last_assistant_msg or "",
-                                call_type=call_type,
-                                caller_phone=caller_phone,
-                                metadata=trace_metadata
+                        try:
+                            from utils.cost_tracker import calculate_call_cost
+                            cost = calculate_call_cost(
+                                llm_input_tokens=usage_data.get("prompt_tokens", 0),
+                                llm_output_tokens=usage_data.get("completion_tokens", 0),
+                                tts_characters=usage_data.get("tts_characters", 0),
+                                call_duration_seconds=duration,
+                                stt_provider=settings.stt_provider,
                             )
+                            trace_metadata.update(cost.to_dict())
+                        except Exception as cost_err:
+                            logger.warning(f"Cost calculation failed: {cost_err}")
+
+                        await update_trace_metadata(
+                            session_id,
+                            first_user_msg or "",
+                            last_assistant_msg or "",
+                            call_type=call_type,
+                            caller_phone=caller_phone,
+                            metadata=trace_metadata
+                        )
                     except Exception as io_err:
-                        logger.error(f"❌ Failed to update trace I/O: {io_err}")
+                        logger.error(f"Failed to update trace metadata: {io_err}")
 
                 # Save recordings if enabled (BEFORE call_extractor.save_to_database)
                 if recording_manager and audiobuffer:
@@ -1018,7 +1015,7 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception as e:
             logger.error(f"❌ Error stopping call logging: {e}")
 
-        # Flush OpenTelemetry traces to Langfuse before exit
+        # Flush OpenTelemetry traces to Phoenix before exit
         try:
             flush_traces()
         except Exception as e:

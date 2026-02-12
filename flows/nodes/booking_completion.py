@@ -59,7 +59,7 @@ def create_booking_success_final_node(booking_info: Dict, selected_services: Lis
 
         total_price += price
 
-        slots_details.append(f"• {service_name} il {formatted_date} dalle {start_time} alle {end_time} - {int(price)} euro")
+        slots_details.append(f"• {service_name} il {formatted_date} dalle {start_time} alle {end_time} - {float(price):.2f} euro")
 
     # Create confirmation message
     if creation_date:
@@ -76,7 +76,7 @@ def create_booking_success_final_node(booking_info: Dict, selected_services: Lis
 **Your Appointments:**
 {chr(10).join(slots_details)}
 
-**Total Cost: {int(total_price)} euro**
+**Total Cost: {float(total_price):.2f} euro**
 
 You will receive a confirmation SMS on your phone number with all the details. Thank you for choosing Cerba Healthcare!
 
@@ -92,8 +92,10 @@ Is there anything else I can help you with today?"""
 - ALWAYS remove leading zeros from BOTH hours AND minutes
 - "07:30" → "7:30", "03:15" → "3:15", "09:45" → "9:45"
 - "11:05" → "11:5" (remove the 0!), "14:05" → "14:5", "08:07" → "8:7"
-- For times ending in :00, say "o'clock": "07:00" → "7 o'clock"
+- For times ending in :00, say "in punto": "07:00" → "7 in punto"
 - Remove leading zeros from dates: "01 November" → "1 November"
+
+CRITICAL ITALIAN RULES: ALWAYS say "più" (NOT "Plus"), "in punto" (NOT "o'clock"), "euro" (NOT "euros").
 
 {settings.language_config}"""
         }],

@@ -119,7 +119,7 @@ class Settings:
     @property
     def agent_language(self) -> str:
         """Agent language for analysis outputs"""
-        return "Italian"  # Change to "Italian" for Italian responses
+        return "Italian"  # Change to "English" for English testing
 
     @property
     def api_timeout(self) -> int:

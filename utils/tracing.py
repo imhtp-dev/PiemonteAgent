@@ -1,6 +1,6 @@
 """
 OpenTelemetry Tracing Utilities for Info Agent
-Provides decorators and context managers for tracking API calls in LangFuse
+Provides decorators and context managers for tracking API calls via OTEL spans.
 """
 
 import time
@@ -35,7 +35,7 @@ def trace_api_call(span_name: str, add_args: bool = True):
             # Your API call logic here
             return result
 
-    Example Span in LangFuse:
+    Example Span in Phoenix:
         api.knowledge_base_query (1.2s)
         ├── function_name: query
         ├── arg.question: "Quali esami servono?"
@@ -247,9 +247,9 @@ def trace_error(
     set_error_status: bool = True
 ):
     """
-    Log error to current LangFuse span with full details.
+    Log error to current Phoenix span with full details.
 
-    This is the recommended way to capture errors in LangFuse for debugging.
+    This is the recommended way to capture errors in Phoenix for debugging.
     Use this in except blocks to ensure errors show up in traces.
 
     Args:
@@ -265,7 +265,7 @@ def trace_error(
             trace_error(e, "booking_creation_failed", {"patient_id": patient_id})
             # Handle error...
 
-    In LangFuse, this will show:
+    In Phoenix, this will show:
         span: booking_creation (ERROR)
         ├── error.context: "booking_creation_failed"
         ├── error.type: "APIError"
@@ -296,7 +296,7 @@ def trace_error(
                     str_value = str(value)[:200]
                     current_span.set_attribute(f"error.{key}", str_value)
 
-        logger.debug(f"📊 Traced error to LangFuse: {type(error).__name__}: {str(error)[:100]}")
+        logger.debug(f"📊 Traced error to Phoenix: {type(error).__name__}: {str(error)[:100]}")
 
 
 def trace_sync_call(span_name: str, add_args: bool = True):
@@ -358,7 +358,7 @@ def add_flow_state_attributes(flow_state: Dict[str, Any]):
     """
     Add booking flow state attributes to the current span.
 
-    Use this to track booking progress in LangFuse traces.
+    Use this to track booking progress in Phoenix traces.
     Extracts key flow state fields safely (handles missing keys, objects).
 
     Args:

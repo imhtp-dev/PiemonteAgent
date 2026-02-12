@@ -26,17 +26,17 @@ services:
   pipecat-agent-1:
     image: rudyimhtpdev/piemonte_region:latest
     container_name: pipecat-agent-1
+    depends_on:
+      phoenix:
+        condition: service_healthy
     environment:
       - PORT=8000
       - HOST=0.0.0.0
       - INSTANCE_ID=1
-      # LangFuse & OpenTelemetry Configuration
+      # Phoenix & OpenTelemetry Configuration
       - ENABLE_TRACING=${ENABLE_TRACING:-false}
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
-      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
-      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT}
-      - OTEL_EXPORTER_OTLP_TRACES_HEADERS=${OTEL_EXPORTER_OTLP_TRACES_HEADERS}
+      - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006}
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://phoenix:6006/v1/traces}
       - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=${OTEL_EXPORTER_OTLP_TRACES_PROTOCOL:-http/protobuf}
       - OTEL_CONSOLE_EXPORT=${OTEL_CONSOLE_EXPORT:-false}
       - OTEL_SERVICE_NAME=pipecat-healthcare-agent-1
@@ -79,17 +79,17 @@ services:
   pipecat-agent-2:
     image: rudyimhtpdev/piemonte_region:latest
     container_name: pipecat-agent-2
+    depends_on:
+      phoenix:
+        condition: service_healthy
     environment:
       - PORT=8000
       - HOST=0.0.0.0
       - INSTANCE_ID=2
-      # LangFuse & OpenTelemetry Configuration
+      # Phoenix & OpenTelemetry Configuration
       - ENABLE_TRACING=${ENABLE_TRACING:-false}
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
-      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
-      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT}
-      - OTEL_EXPORTER_OTLP_TRACES_HEADERS=${OTEL_EXPORTER_OTLP_TRACES_HEADERS}
+      - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006}
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://phoenix:6006/v1/traces}
       - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=${OTEL_EXPORTER_OTLP_TRACES_PROTOCOL:-http/protobuf}
       - OTEL_CONSOLE_EXPORT=${OTEL_CONSOLE_EXPORT:-false}
       - OTEL_SERVICE_NAME=pipecat-healthcare-agent-2
@@ -132,17 +132,17 @@ services:
   pipecat-agent-3:
     image: rudyimhtpdev/piemonte_region:latest
     container_name: pipecat-agent-3
+    depends_on:
+      phoenix:
+        condition: service_healthy
     environment:
       - PORT=8000
       - HOST=0.0.0.0
       - INSTANCE_ID=3
-      # LangFuse & OpenTelemetry Configuration
+      # Phoenix & OpenTelemetry Configuration
       - ENABLE_TRACING=${ENABLE_TRACING:-false}
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
-      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
-      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT}
-      - OTEL_EXPORTER_OTLP_TRACES_HEADERS=${OTEL_EXPORTER_OTLP_TRACES_HEADERS}
+      - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006}
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://phoenix:6006/v1/traces}
       - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=${OTEL_EXPORTER_OTLP_TRACES_PROTOCOL:-http/protobuf}
       - OTEL_CONSOLE_EXPORT=${OTEL_CONSOLE_EXPORT:-false}
       - OTEL_SERVICE_NAME=pipecat-healthcare-agent-3
@@ -216,6 +216,40 @@ services:
   #   networks:
   #     - pipecat-network
 
+  # Arize Phoenix - Self-hosted trace observability
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: phoenix
+    ports:
+      - "6006:6006"
+      - "4317:4317"
+    environment:
+      - PHOENIX_WORKING_DIR=/mnt/data
+      - PHOENIX_DEFAULT_RETENTION_POLICY_DAYS=60
+    volumes:
+      - phoenix_data:/mnt/data
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.1'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6006/healthz"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - pipecat-network
+
 networks:
   pipecat-network:
     driver: bridge
+
+volumes:
+  phoenix_data:
+    driver: local

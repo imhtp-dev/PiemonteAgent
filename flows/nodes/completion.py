@@ -78,7 +78,7 @@ def create_booking_success_multi_node(booked_slots: List[Dict], total_price: flo
         start_time = start_dt.strftime("%-H:%M")
         end_time = end_dt.strftime("%-H:%M")
         
-        booking_text = f"You have booked {slot['service_name']} for {formatted_date} from {start_time} to {end_time} and this appointment costs {int(slot['price'])} euro"
+        booking_text = f"You have booked {slot['service_name']} for {formatted_date} from {start_time} to {end_time} and this appointment costs {float(slot['price']):.2f} euro"
         bookings_text.append(booking_text)
     
     bookings_summary = "\n\n".join(bookings_text)
@@ -87,7 +87,7 @@ def create_booking_success_multi_node(booked_slots: List[Dict], total_price: flo
 
 {bookings_summary}
 
-The total cost of your appointments is {int(total_price)} euro.
+The total cost of your appointments is {float(total_price):.2f} euro.
 
 Your bookings are confirmed and you will receive confirmation details shortly."""
     

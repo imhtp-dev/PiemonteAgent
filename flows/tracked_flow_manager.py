@@ -60,7 +60,7 @@ class TrackedFlowManager(FlowManager):
     """
 
     async def _set_node(self, node_id: str, node_config) -> None:
-        """Override to emit a span for every node transition (visible in LangFuse)."""
+        """Override to emit a span for every node transition (visible in Phoenix)."""
         previous_node = self.state.get("current_node", "none")
 
         with _tracer.start_as_current_span(f"node.{node_id}") as span:
@@ -93,21 +93,21 @@ class TrackedFlowManager(FlowManager):
         args: FlowArgs
     ) -> Union[FlowResult, Tuple[Dict[str, Any], NodeConfig]]:
         """
-        Override to add failure tracking and LangFuse tracing to every handler call.
+        Override to add failure tracking and Phoenix tracing to every handler call.
 
         This intercepts ALL handler invocations and:
-        1. Creates OpenTelemetry span for the handler (visible in LangFuse)
+        1. Creates OpenTelemetry span for the handler (visible in Phoenix)
         2. Adds flow state attributes to the span
         3. Initializes failure tracker if needed
         4. Calls the original handler
         5. Checks result for failure/knowledge gap
         6. Tracks failures and determines if transfer needed
-        7. Records errors to the span for LangFuse visibility
+        7. Records errors to the span for Phoenix visibility
         8. Returns modified result with transfer node if threshold reached
         """
         handler_name = getattr(handler, "__name__", "unknown_handler")
 
-        # Create span for this handler call (visible in LangFuse)
+        # Create span for this handler call (visible in Phoenix)
         with _tracer.start_as_current_span(f"handler.{handler_name}") as span:
             # Add handler metadata
             span.set_attribute("handler.name", handler_name)
@@ -133,10 +133,10 @@ class TrackedFlowManager(FlowManager):
                 result = await super()._call_handler(handler, args)
                 span.set_attribute("handler.success", True)
             except Exception as e:
-                # Handler threw exception - record to LangFuse and track as failure
+                # Handler threw exception - record to Phoenix and track as failure
                 logger.error(f"❌ Handler {handler_name} raised exception: {e}")
 
-                # Record exception to LangFuse span
+                # Record exception to Phoenix span
                 span.set_status(Status(StatusCode.ERROR, str(e)[:200]))
                 span.record_exception(e)
                 span.set_attribute("handler.success", False)
