@@ -102,9 +102,6 @@ def list_slot(health_center_uuid, date_search, uuid_exam, gender='m', date_of_bi
                 print(f'🔍 SLOT FETCH DEBUG: end_time: {slot.get("end_time", "MISSING")}')
                 print(f'🔍 SLOT FETCH DEBUG: providing_entity_availability_uuid: {slot.get("providing_entity_availability_uuid", "MISSING")}')
                 print(f'🔍 SLOT FETCH DEBUG: health_services: {slot.get("health_services", "MISSING")}')
-                if i >= 2:  # Limit to first 3 slots to avoid log spam
-                    print(f'🔍 SLOT FETCH DEBUG: ... ({len(slots) - i - 1} more slots not shown)')
-                    break
         else:
             print(f'🔍 SLOT FETCH DEBUG: Response is not a list: {slots}')
 

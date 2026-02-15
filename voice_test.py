@@ -177,6 +177,11 @@ class DailyTestConfig:
     @property
     def daily_transport_params(self) -> Dict[str, Any]:
         """Daily transport parameters for testing"""
+        # When Smart Turn is active, VAD fires quickly (0.2s) and the ML model
+        # decides if the turn is truly over.
+        vad_stop_secs = 0.2 if settings.smart_turn_enabled else 0.3
+        logger.info(f"VAD stop_secs={vad_stop_secs} (Smart Turn {'active' if settings.smart_turn_enabled else 'off'})")
+
         return {
             "audio_in_enabled": True,
             "audio_out_enabled": True,
@@ -190,7 +195,7 @@ class DailyTestConfig:
             "vad_analyzer": SileroVADAnalyzer(
                 params=VADParams(
                     start_secs=0.1,    # Faster detection for testing
-                    stop_secs=0.3,     # Quicker stop for testing
+                    stop_secs=vad_stop_secs,
                     min_volume=0.2     # More sensitive for testing
                 )
             )
@@ -361,7 +366,9 @@ class DailyHealthcareFlowTester:
         stt = create_stt_service()
         tts = create_tts_service()
         llm = create_llm_service()
-        context_aggregator, node_mute_strategy = create_context_aggregator(llm)
+        context_aggregator, node_mute_strategy = create_context_aggregator(
+            llm, smart_turn_enabled=settings.smart_turn_enabled
+        )
 
         logger.info("✅ All services initialized")
 

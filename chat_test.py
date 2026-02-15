@@ -1043,7 +1043,7 @@ async def websocket_endpoint(websocket: WebSocket):
         # CREATE SERVICES (NO STT/TTS FOR TEXT MODE!)
         logger.info("Initializing services for TEXT mode...")
         llm = create_llm_service()
-        context_aggregator = create_context_aggregator(llm)
+        context_aggregator, _node_mute_strategy = create_context_aggregator(llm)
         logger.info("✅ LLM and context aggregator initialized (no STT/TTS)")
 
         # CREATE TEXT TRANSPORT SIMULATOR

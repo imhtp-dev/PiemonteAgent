@@ -238,18 +238,51 @@ def create_llm_service() -> OpenAILLMService:
     )
 
 
-def create_context_aggregator(llm_service: OpenAILLMService) -> tuple[LLMContextAggregatorPair, NodeAwareMuteStrategy]:
-    """Create context aggregator with mute strategies.
+def create_context_aggregator(
+    llm_service: OpenAILLMService,
+    smart_turn_enabled: bool = False,
+) -> tuple[LLMContextAggregatorPair, NodeAwareMuteStrategy]:
+    """Create context aggregator with mute strategies and optional smart turn.
 
     Two mute strategies (OR logic — either triggers mute):
     - FunctionCallUserMuteStrategy: mutes during function call execution
     - NodeAwareMuteStrategy: mutes during bot speech on processing nodes
+
+    When smart_turn_enabled=True, adds ML-based end-of-turn detection
+    using LocalSmartTurnAnalyzerV3 (ONNX model, ~8MB).
 
     Returns tuple of (aggregator, node_mute_strategy).
     Caller must call node_mute_strategy.set_flow_state(flow_manager.state)
     after flow_manager is created.
     """
     node_mute_strategy = NodeAwareMuteStrategy()
+
+    user_turn_strategies = None
+    if smart_turn_enabled:
+        try:
+            from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
+            from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
+            from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
+            from pipecat.turns.user_turn_strategies import UserTurnStrategies
+
+            st_config = settings.smart_turn_config
+            analyzer = LocalSmartTurnAnalyzerV3(
+                cpu_count=st_config["cpu_count"],
+                params=SmartTurnParams(
+                    stop_secs=st_config["stop_secs"],
+                    pre_speech_ms=st_config["pre_speech_ms"],
+                    max_duration_secs=st_config["max_duration_secs"],
+                ),
+            )
+            user_turn_strategies = UserTurnStrategies(
+                stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=analyzer)]
+            )
+            logger.success("Smart Turn V3 enabled (ML end-of-turn detection)")
+        except ImportError as e:
+            logger.warning(f"Smart Turn V3 unavailable, falling back to silence-based VAD: {e}")
+        except Exception as e:
+            logger.error(f"Smart Turn V3 init failed, falling back to silence-based VAD: {e}")
+
     aggregator = LLMContextAggregatorPair(
         LLMContext(),
         user_params=LLMUserAggregatorParams(
@@ -257,6 +290,7 @@ def create_context_aggregator(llm_service: OpenAILLMService) -> tuple[LLMContext
                 FunctionCallUserMuteStrategy(),
                 node_mute_strategy,
             ],
+            user_turn_strategies=user_turn_strategies,
         ),
     )
     return aggregator, node_mute_strategy

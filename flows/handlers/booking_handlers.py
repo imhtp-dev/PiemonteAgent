@@ -703,7 +703,7 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
 
     except (ValueError, TypeError) as e:
         logger.error(f"Date/time parsing error: {e}")
-        return {"success": False, "message": "Invalid date format. Please use a valid date like 'November 21' or '2025-11-21'"}, None
+        return {"success": False, "message": "Invalid date format. Please use a valid date like 'November 21' or YYYY-MM-DD format"}, None
 
 
 async def update_date_and_search_slots(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
@@ -860,7 +860,7 @@ async def update_date_and_search_slots(args: FlowArgs, flow_manager: FlowManager
 
     except (ValueError, TypeError) as e:
         logger.error(f"Date parsing error: {e}")
-        return {"success": False, "message": "Invalid date format. Please use format YYYY-MM-DD (e.g., '2025-11-26')"}, None
+        return {"success": False, "message": "Invalid date format. Please use format YYYY-MM-DD"}, None
 
 
 async def search_slots_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
@@ -1634,7 +1634,8 @@ async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: Flow
                 "service_name": current_service_name,  # Use combined name for bundle/separate
                 "start_time": start_time,
                 "end_time": end_time,
-                "price": slot_price  # Use extracted price, not cached state["slot_price"]
+                "price": slot_price,  # Use extracted price, not cached state["slot_price"]
+                "health_services": health_services  # Preserve for preparation_notes in summary
             })
 
             logger.success(f"✅ Slot reserved successfully: {slot_uuid}")
@@ -2162,12 +2163,16 @@ async def search_different_date_handler(args: FlowArgs, flow_manager: FlowManage
         # Perform new slot search with the requested date
         logger.info(f"🔎 Searching slots for {current_service_name} on {new_date}")
 
+        # Format DOB for API (remove dashes)
+        patient_dob = flow_manager.state.get("patient_dob", "1980-04-13")
+        dob_formatted = patient_dob.replace("-", "")
+
         slots_response = list_slot(
             health_center_uuid=selected_center.uuid,
             date_search=new_date,
             uuid_exam=uuid_exam,  # Use group-aware UUID list
             gender=flow_manager.state.get("patient_gender", "m"),
-            date_of_birth=flow_manager.state.get("patient_dob", "1980-04-13")
+            date_of_birth=dob_formatted
         )
 
         if slots_response and len(slots_response) > 0:

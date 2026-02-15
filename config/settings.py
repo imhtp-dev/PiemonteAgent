@@ -121,6 +121,10 @@ class Settings:
         """Agent language for analysis outputs"""
         return "Italian"  # Change to "English" for English testing
 
+    def current_year(self) -> str:
+        """Current year from env var (avoids hardcoding in prompts)"""
+        return os.getenv("CURRENT_YEAR", "2026")
+
     @property
     def api_timeout(self) -> int:
         """Timeout for external API calls in seconds"""
@@ -158,6 +162,21 @@ class Settings:
                 "CALL_GRAPH_URL",
                 f"{base_url}/call_graph"
             )
+        }
+
+    @property
+    def smart_turn_enabled(self) -> bool:
+        """Whether Smart Turn V3 ML-based end-of-turn detection is enabled"""
+        return os.getenv("SMART_TURN_ENABLED", "true").lower() == "true"
+
+    @property
+    def smart_turn_config(self) -> Dict[str, Any]:
+        """Smart Turn V3 configuration"""
+        return {
+            "stop_secs": float(os.getenv("SMART_TURN_STOP_SECS", "3.0")),
+            "pre_speech_ms": float(os.getenv("SMART_TURN_PRE_SPEECH_MS", "500")),
+            "max_duration_secs": float(os.getenv("SMART_TURN_MAX_DURATION", "8")),
+            "cpu_count": int(os.getenv("SMART_TURN_CPU_COUNT", "1")),
         }
 
     @property

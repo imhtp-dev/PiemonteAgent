@@ -3,6 +3,8 @@ Booking and appointment management nodes
 """
 
 import json
+import re
+import html as html_module
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Dict, Any, List
@@ -425,7 +427,7 @@ def create_collect_datetime_node(service_name: str = None, is_multi_service: boo
     today = datetime.now()
     today_date = today.strftime("%Y-%m-%d")
     today_day = today.strftime("%A")  # Full day name (e.g., "Thursday")
-    today_formatted = today.strftime("%B %d, %Y")  # e.g., "October 16, 2025"
+    today_formatted = today.strftime("%B %d, %Y")
 
     # Determine node name and task content based on service name
     if service_name:
@@ -458,7 +460,7 @@ def create_collect_datetime_node(service_name: str = None, is_multi_service: boo
             "role": "system",
             "content": f"""{booking_context}
 
-Today is {today_day}, {today_formatted} (date: {today_date}). The current year is 2025.
+Today is {today_day}, {today_formatted} (date: {today_date}). The current year is {settings.current_year}.
 
 You can understand natural language date expressions and calculate the correct dates automatically. When a patient mentions expressions like:
 - "tomorrow" → calculate the next day
@@ -503,7 +505,7 @@ Always use 24-hour time format. Be flexible with user input formats. Speak natur
                 properties={
                     "preferred_date": {
                         "type": "string",
-                        "description": "Preferred appointment date in YYYY-MM-DD format. Calculate from natural language expressions using today's date context. Examples: if today is 2025-10-16 (Thursday) and user says 'next Friday' → '2025-10-24', 'tomorrow' → '2025-10-17', 'next Thursday' → '2025-10-23'"
+                        "description": f"Preferred appointment date in YYYY-MM-DD format. Calculate from natural language expressions using today's date context. Examples: if today is {today_date} and user says 'next Friday' → calculate next Friday, 'tomorrow' → next day, 'next Thursday' → next Thursday"
                     },
                     "preferred_time": {
                         "type": "string",
@@ -970,7 +972,7 @@ Ask the user which time works best for them."""
                     },
                     "selected_date": {
                         "type": "string",
-                        "description": "Readable date of the selected slot (e.g., '21 November 2025')"
+                        "description": f"Readable date of the selected slot (e.g., '21 November {settings.current_year}')"
                     }
                 },
                 required=["providing_entity_availability_uuid"]
@@ -989,7 +991,7 @@ Ask the user which time works best for them."""
                 properties={
                     "new_date": {
                         "type": "string",
-                        "description": "The new date to search for in YYYY-MM-DD format (e.g., '2025-11-08')"
+                        "description": f"The new date to search for in YYYY-MM-DD format (e.g., '{settings.current_year}-11-08')"
                     },
                     "time_preference": {
                         "type": "string",
@@ -1006,7 +1008,7 @@ Ask the user which time works best for them."""
                 properties={
                     "preferred_date": {
                         "type": "string",
-                        "description": "New preferred appointment date in YYYY-MM-DD format (e.g., '2025-11-26'). Must be one of the available dates shown above."
+                        "description": f"New preferred appointment date in YYYY-MM-DD format (e.g., '{settings.current_year}-11-26'). Must be one of the available dates shown above."
                     },
                     "time_preference": {
                         "type": "string",
@@ -1108,7 +1110,7 @@ def create_no_slots_node(date: str, time_preference: str = "any time", first_app
         name="no_slots_available",
         role_messages=[{
             "role": "system",
-            "content": f"{system_constraint_msg}We are in 2025. When there are no available slots, be helpful and suggest alternatives in a human way. Offer to search for different dates or times. Never mention technical details or UUIDs. {settings.language_config}"
+            "content": f"{system_constraint_msg}We are in {settings.current_year}. When there are no available slots, be helpful and suggest alternatives in a human way. Offer to search for different dates or times. Never mention technical details or UUIDs. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",
@@ -1147,7 +1149,12 @@ def create_booking_summary_confirmation_node(selected_services: List[HealthServi
 
     # Format service details
     # NOTE: Use service_name from booked_slots to support multi-service bundles and separate bookings
+    logger.info("=" * 80)
+    logger.info("💰 BOOKING SUMMARY - PRICE VERIFICATION")
+    logger.info(f"💰 Cerba member: {is_cerba_member}")
+    logger.info(f"💰 Total slots to summarize: {len(selected_slots)}")
     services_text = []
+    preparation_notes = []
     for i, slot in enumerate(selected_slots):
         # Convert UTC slot times to Italian local time for user display
         from services.timezone_utils import utc_to_italian_display
@@ -1176,6 +1183,13 @@ def create_booking_summary_confirmation_node(selected_services: List[HealthServi
         # Get the price from booked_slots (this is the correct multiplied price for bundles)
         service_cost = slot.get('price', 0)
 
+        # Log API prices vs displayed price for verification
+        if 'health_services' in slot and len(slot['health_services']) > 0:
+            for hs in slot['health_services']:
+                api_price = hs.get('price', 'N/A')
+                api_cerba_price = hs.get('cerba_card_price', 'N/A')
+                logger.info(f"💰 PRICE CHECK [{service_name}]: API price={api_price}€, API cerba_card_price={api_cerba_price}€, stored_price={service_cost}€, is_cerba={is_cerba_member}")
+
         # Fallback to health_services only if price is missing from booked_slots
         if service_cost == 0 and 'health_services' in slot and len(slot['health_services']) > 0:
             health_service = slot['health_services'][0]
@@ -1189,9 +1203,28 @@ def create_booking_summary_confirmation_node(selected_services: List[HealthServi
 
         services_text.append(f"• {service_name} il {formatted_date} alle {formatted_time} - {float(service_cost):.2f} euro")
 
+        # Extract preparation notes from health_services (strip HTML tags and decode entities)
+        if 'health_services' in slot and len(slot['health_services']) > 0:
+            for hs in slot['health_services']:
+                prep_notes = hs.get('preparation_notes')
+                if prep_notes and prep_notes.strip():
+                    # Strip HTML tags and decode entities to plain text
+                    clean_notes = re.sub(r'<[^>]+>', ' ', prep_notes)
+                    clean_notes = html_module.unescape(clean_notes)
+                    clean_notes = re.sub(r'\s+', ' ', clean_notes).strip()
+                    if clean_notes:
+                        preparation_notes.append(f"• **{hs.get('name', service_name)}**: {clean_notes}")
+
     services_summary = "\n".join(services_text)
 
+    # Build preparation notes section (only if any exist)
+    preparation_section = ""
+    if preparation_notes:
+        preparation_section = "\n\n**Preparation Notes:**\n" + "\n".join(preparation_notes)
+
     # Create summary content
+    logger.info(f"💰 FINAL TOTAL passed to summary: {total_cost}€ (cerba_member={is_cerba_member})")
+    logger.info("=" * 80)
     membership_text = " (with Cerba Card discount)" if is_cerba_member else ""
 
     summary_content = f"""Here's a summary of your booking:
@@ -1202,7 +1235,7 @@ def create_booking_summary_confirmation_node(selected_services: List[HealthServi
 **Health Center:**
 {selected_center.name}
 
-**Total Cost:** {float(total_cost):.2f} euro{membership_text}
+**Total Cost:** {float(total_cost):.2f} euro{membership_text}{preparation_section}
 
 Would you like to proceed with this booking? If yes, I'll just need to collect some personal information to complete your appointment. If you'd like to change the time slot, I can show you other available times for the same service and date."""
 
@@ -1216,6 +1249,8 @@ Would you like to proceed with this booking? If yes, I'll just need to collect s
 Date/time formatting: Remove leading zeros ("07:30"→"7:30"), times ending :00 say "in punto" (e.g. "7 in punto").
 
 CRITICAL ITALIAN RULES: ALWAYS say "più" (NOT "Plus"), "in punto" (NOT "o'clock"), "euro" (NOT "euros").
+
+If the summary includes **Preparation Notes**, read them to the patient clearly after the cost. If there are no preparation notes, do NOT mention them at all.
 
 When user confirms/cancels/changes, call confirm_booking_summary function. DO NOT say "booking confirmed" - booking happens LATER. {settings.language_config}"""
         }],

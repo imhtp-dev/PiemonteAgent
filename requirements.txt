@@ -6,7 +6,7 @@
 # ============================================
 
 # Core Pipecat with all extras
-pipecat-ai[daily,openai,silero,deepgram,elevenlabs,azure]>=0.0.100
+pipecat-ai[daily,openai,silero,deepgram,elevenlabs,azure,local-smart-turn-v3]>=0.0.100
 pipecat-ai-flows==0.0.22
 
 # PyTorch (large downloads ~900MB total)
