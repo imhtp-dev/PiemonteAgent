@@ -121,6 +121,7 @@ class Settings:
         """Agent language for analysis outputs"""
         return "Italian"  # Change to "English" for English testing
 
+    @property
     def current_year(self) -> str:
         """Current year from env var (avoids hardcoding in prompts)"""
         return os.getenv("CURRENT_YEAR", "2026")

@@ -28,7 +28,8 @@ from flows.handlers.booking_handlers import (
     update_date_and_search_slots,
     show_more_same_day_slots_handler,
     search_different_date_handler,
-    handle_radius_expansion_response
+    handle_radius_expansion_response,
+    skip_current_service_handler
 )
 from config.settings import settings
 from utils.italian_time import time_to_italian_words
@@ -1076,7 +1077,7 @@ def create_slot_refresh_node(service_name: str) -> NodeConfig:
     )
 
 
-def create_no_slots_node(date: str, time_preference: str = "any time", first_appointment_date: str = None, is_automatic_search: bool = False) -> NodeConfig:
+def create_no_slots_node(date: str, time_preference: str = "any time", first_appointment_date: str = None, is_automatic_search: bool = False, has_booked_slots: bool = False) -> NodeConfig:
     """Create node when no slots are available - with human-like alternative suggestions
 
     Args:
@@ -1084,6 +1085,7 @@ def create_no_slots_node(date: str, time_preference: str = "any time", first_app
         time_preference: Time preference used in search
         first_appointment_date: Date of first appointment (for 2nd+ services)
         is_automatic_search: True if this is automatic search for 2nd+ service (user didn't choose the date)
+        has_booked_slots: True if there are already-booked slots from previous services
     """
 
     # Build constraint message for multi-service bookings
@@ -1106,38 +1108,57 @@ def create_no_slots_node(date: str, time_preference: str = "any time", first_app
         else:
             no_slots_message = f"I'm sorry, there are no available slots for {date} for {time_preference}.{date_constraint_msg} I'd like to suggest some alternatives: would you like to try a different date or time? For example, we might have available slots for {date} at a different time or on another date."
 
+    # Build skip instruction for multi-service bookings
+    skip_instruction = ""
+    if has_booked_slots:
+        skip_instruction = " If the user says they want to skip this service and proceed with only the already-booked services, call the skip_current_service function."
+
+    functions = [
+        FlowsFunctionSchema(
+            name="collect_datetime",
+            handler=collect_datetime_and_transition,
+            description="Collect new preferred date and optional time preference",
+            properties={
+                "preferred_date": {
+                    "type": "string",
+                    "description": "New preferred appointment date in YYYY-MM-DD format"
+                },
+                "preferred_time": {
+                    "type": "string",
+                    "description": "New preferred appointment time (specific time like '09:00', '14:30' or time range like 'morning', 'afternoon')"
+                },
+                "time_preference": {
+                    "type": "string",
+                    "description": "Time preference: 'morning' (8:00-12:00), 'afternoon' (12:00-19:00), 'specific' (exact time) or 'any' (no preference)"
+                }
+            },
+            required=["preferred_date"]
+        )
+    ]
+
+    # Add skip function only when there are already-booked services to proceed with
+    if has_booked_slots:
+        functions.append(
+            FlowsFunctionSchema(
+                name="skip_current_service",
+                handler=skip_current_service_handler,
+                description="Skip booking this service and proceed with only the already-booked services. Use when the user says to skip, leave, or not book this service.",
+                properties={},
+                required=[]
+            )
+        )
+
     return NodeConfig(
         name="no_slots_available",
         role_messages=[{
             "role": "system",
-            "content": f"{system_constraint_msg}We are in {settings.current_year}. When there are no available slots, be helpful and suggest alternatives in a human way. Offer to search for different dates or times. Never mention technical details or UUIDs. {settings.language_config}"
+            "content": f"{system_constraint_msg}We are in {settings.current_year}. When there are no available slots, be helpful and suggest alternatives in a human way. Offer to search for different dates or times.{skip_instruction} Never mention technical details or UUIDs. NEVER say the booking is confirmed or completed - the booking has NOT been finalized yet. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",
             "content": no_slots_message
         }],
-        functions=[
-            FlowsFunctionSchema(
-                name="collect_datetime",
-                handler=collect_datetime_and_transition,
-                description="Collect new preferred date and optional time preference",
-                properties={
-                    "preferred_date": {
-                        "type": "string",
-                        "description": "New preferred appointment date in YYYY-MM-DD format"
-                    },
-                    "preferred_time": {
-                        "type": "string",
-                        "description": "New preferred appointment time (specific time like '09:00', '14:30' or time range like 'morning', 'afternoon')"
-                    },
-                    "time_preference": {
-                        "type": "string",
-                        "description": "Time preference: 'morning' (8:00-12:00), 'afternoon' (12:00-19:00), 'specific' (exact time) or 'any' (no preference)"
-                    }
-                },
-                required=["preferred_date"]
-            )
-        ]
+        functions=functions
     )
 
 

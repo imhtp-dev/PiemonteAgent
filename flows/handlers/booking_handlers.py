@@ -853,10 +853,11 @@ async def update_date_and_search_slots(args: FlowArgs, flow_manager: FlowManager
 
             # Go to no slots node with suggestion for different dates
             from flows.nodes.booking import create_no_slots_node
+            has_booked = bool(flow_manager.state.get("booked_slots"))
             return {
                 "success": False,
                 "message": error_message
-            }, create_no_slots_node(preferred_date, flow_manager.state.get("time_preference", "any time"))
+            }, create_no_slots_node(preferred_date, flow_manager.state.get("time_preference", "any time"), has_booked_slots=has_booked)
 
     except (ValueError, TypeError) as e:
         logger.error(f"Date parsing error: {e}")
@@ -1202,11 +1203,12 @@ async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowM
                     logger.info(f"🤖 AUTOMATIC SEARCH: This is 2nd+ service with auto date/time")
 
             from flows.nodes.booking import create_no_slots_node
+            has_booked = bool(flow_manager.state.get("booked_slots"))
             return {
                 "success": False,
                 "message": error_message
-            }, create_no_slots_node(preferred_date, time_preference, first_appointment_date, is_automatic_search)
-            
+            }, create_no_slots_node(preferred_date, time_preference, first_appointment_date, is_automatic_search, has_booked_slots=has_booked)
+
     except Exception as e:
         logger.error(f"Slot search error: {e}")
         from flows.nodes.completion import create_error_node
@@ -2196,10 +2198,11 @@ async def search_different_date_handler(args: FlowArgs, flow_manager: FlowManage
         else:
             logger.warning(f"⚠️ No slots found on {new_date}")
             from flows.nodes.booking import create_no_slots_node
+            has_booked = bool(flow_manager.state.get("booked_slots"))
             return {
                 "success": False,
                 "message": f"No available slots found on {new_date}"
-            }, create_no_slots_node(new_date, time_preference)
+            }, create_no_slots_node(new_date, time_preference, has_booked_slots=has_booked)
 
     except Exception as e:
         logger.error(f"❌ Error searching different date: {e}")
@@ -2207,3 +2210,66 @@ async def search_different_date_handler(args: FlowArgs, flow_manager: FlowManage
             "success": False,
             "message": "An error occurred while searching for slots"
         }, None
+
+
+async def skip_current_service_handler(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
+    """Skip the current service when no slots are available and proceed with already-booked services.
+
+    This handles the case where a user says "skip this service" or "just book the first one"
+    during a multi-service booking when no slots are found for a subsequent service.
+    """
+    try:
+        booked_slots = flow_manager.state.get("booked_slots", [])
+        selected_services = flow_manager.state.get("selected_services", [])
+        selected_center = flow_manager.state.get("selected_center")
+        is_cerba_member = flow_manager.state.get("is_cerba_member", False)
+
+        # Get current service name for logging
+        booking_scenario = flow_manager.state.get("booking_scenario", "single")
+        current_group_index = flow_manager.state.get("current_group_index", 0)
+        service_groups = flow_manager.state.get("service_groups", [])
+
+        skipped_service = "unknown"
+        if service_groups and current_group_index < len(service_groups):
+            group = service_groups[current_group_index]
+            # group["services"] contains HealthService objects, not dicts
+            skipped_service = ", ".join(getattr(s, "name", str(s)) for s in group.get("services", []))
+
+        logger.info("=" * 80)
+        logger.info(f"⏭️ SKIP SERVICE: User chose to skip '{skipped_service}'")
+        logger.info(f"   Booked slots so far: {len(booked_slots)}")
+        logger.info("=" * 80)
+
+        if booked_slots:
+            # Calculate total cost from already-booked slots
+            total_cost = sum(slot.get("price", 0) for slot in booked_slots)
+
+            logger.info(f"✅ Proceeding to booking summary with {len(booked_slots)} booked service(s)")
+            logger.info(f"   Total cost: {total_cost}€")
+
+            from flows.nodes.booking import create_booking_summary_confirmation_node
+            return {
+                "success": True,
+                "skipped_service": skipped_service,
+                "booked_count": len(booked_slots),
+                "message": f"Skipped {skipped_service}. Proceeding with {len(booked_slots)} booked service(s)."
+            }, create_booking_summary_confirmation_node(
+                selected_services, booked_slots, selected_center, total_cost, is_cerba_member
+            )
+        else:
+            # No services booked at all - end conversation gracefully
+            logger.warning(f"⚠️ No services booked and user wants to skip. Ending conversation.")
+
+            from flows.nodes.completion import create_error_node
+            return {
+                "success": False,
+                "message": "No services were booked."
+            }, create_error_node("Non è stato prenotato alcun servizio. Se hai bisogno di assistenza, richiama pure.")
+
+    except Exception as e:
+        logger.error(f"❌ Error in skip_current_service_handler: {e}")
+        from flows.nodes.completion import create_error_node
+        return {
+            "success": False,
+            "message": "An error occurred"
+        }, create_error_node("Si è verificato un errore. Riprova più tardi.")
