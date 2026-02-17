@@ -60,8 +60,24 @@ def create_orange_box_node() -> NodeConfig:
     )
 
 
-def create_flow_navigation_node(generated_flow: dict, service_name: str) -> NodeConfig:
+def create_flow_navigation_node(generated_flow: dict, service_name: str, pending_additional_request: str = "") -> NodeConfig:
     """Create LLM-driven flow navigation node"""
+
+    pending_section = ""
+    if pending_additional_request:
+        pending_section = f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔔 PENDING ADDITIONAL SERVICE REQUEST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The patient also wants to book: "{pending_additional_request}"
+While navigating, if you see a service in any list_health_services whose name closely matches
+"{pending_additional_request}", inform the user:
+"Ho notato che [service_name] è disponibile come servizio aggiuntivo. Vuoi includerlo?"
+If YES → include it in additional_services array AND append "pending_matched" to flow_path
+If NO → proceed normally, it will be booked separately later
+
+"""
+
     return NodeConfig(
         name="flow_navigation",
         role_messages=[{
@@ -147,7 +163,7 @@ Using your JSON structure:
 7️⃣ FOUND: "action": "save_cart"
    → END REACHED! Call finalize_services with ALL tracked services
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{pending_section}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🚨 CRITICAL RULES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -450,7 +466,6 @@ def create_collect_datetime_node(service_name: str = None, is_multi_service: boo
 
     return NodeConfig(
         name=node_name,
-        context_strategy=ContextStrategyConfig(strategy=ContextStrategy.RESET),
         pre_actions=[
             {
                 "type": "tts_say",

@@ -119,7 +119,7 @@ class Settings:
     @property
     def agent_language(self) -> str:
         """Agent language for analysis outputs"""
-        return "Italian"  # Change to "English" for English testing
+        return "English"  # Change to "English" for English testing
 
     @property
     def current_year(self) -> str:

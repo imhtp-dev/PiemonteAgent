@@ -121,7 +121,8 @@ async def perform_flow_generation_and_transition(args: FlowArgs, flow_manager: F
         
         # Transition to LLM-driven flow navigation
         from flows.nodes.booking import create_flow_navigation_node
-        return result, create_flow_navigation_node(generated_flow, primary_service.name)
+        pending = flow_manager.state.get("pending_additional_request", "")
+        return result, create_flow_navigation_node(generated_flow, primary_service.name, pending)
         
     except Exception as e:
         logger.error(f"Flow generation error: {e}")
@@ -204,7 +205,14 @@ async def finalize_services_and_search_centers(args: FlowArgs, flow_manager: Flo
             return {"success": False, "message": "No services selected"}, create_error_node("No services selected. Please restart booking.")
         
         flow_manager.state["selected_services"] = selected_services
-        
+
+        # Check if pending additional service was matched during orange box navigation
+        flow_path = args.get("flow_path", "")
+        if "pending_matched" in flow_path:
+            flow_manager.state["pending_additional_resolved"] = True
+            flow_manager.state.pop("pending_additional_request", None)
+            logger.info("✅ Pending additional service included via orange box flow")
+
         logger.success(f"🎯 Final service selection: {[s.name for s in selected_services]}")
         logger.success(f"📊 Service count: {len(selected_services)}")
         

@@ -1,6 +1,6 @@
 """
 Global Function Schemas
-8 global functions available at every node in the conversation.
+10 global functions available at every node in the conversation.
 """
 
 from pipecat_flows import FlowsFunctionSchema
@@ -13,7 +13,9 @@ from flows.handlers.global_handlers import (
     global_exam_by_sport,
     global_clinic_info,
     global_request_transfer,
+    global_check_service_price,
     global_start_booking,
+    global_cancel_and_restart,
 )
 
 
@@ -135,17 +137,44 @@ GLOBAL_FUNCTIONS = [
         handler=global_request_transfer,
     ),
 
-    # 8. Start Booking (TRANSITIONS)
+    # 8. Check Service Price (TRANSITIONS)
+    FlowsFunctionSchema(
+        name="check_service_price",
+        description="Check price of a health service. Use when patient asks about cost/price: 'Quanto costa...', 'Qual è il prezzo...', 'Che prezzo ha...'",
+        properties={
+            "service_request": {
+                "type": "string",
+                "description": "The health service to check price for"
+            }
+        },
+        required=["service_request"],
+        handler=global_check_service_price,
+    ),
+
+    # 9. Start Booking (TRANSITIONS)
     FlowsFunctionSchema(
         name="start_booking",
-        description="Start appointment booking flow. Use when patient wants to book an appointment: 'Voglio prenotare...', 'Prenota per me...', 'Devo prenotare...'",
+        description="Start appointment booking flow. If patient mentions TWO services (e.g. 'RX caviglia e RX avampiede'), set service_request to the FIRST and additional_service_request to the SECOND.",
         properties={
             "service_request": {
                 "type": "string",
                 "description": "What the patient wants to book (e.g., 'visita sportiva', 'esame del sangue', 'ecografia')"
+            },
+            "additional_service_request": {
+                "type": "string",
+                "description": "If patient mentions a second service to book, put it here. Only the raw service name text."
             }
         },
         required=["service_request"],
         handler=global_start_booking,
+    ),
+
+    # 10. Cancel Booking and Restart (TRANSITIONS)
+    FlowsFunctionSchema(
+        name="cancel_and_restart",
+        description="Cancel current booking and go back to main menu. Use when patient says: 'voglio cambiare prenotazione', 'annulla la prenotazione', 'voglio prenotare qualcos'altro', 'ricominciamo da capo'. Deletes any reserved slots and returns to router.",
+        properties={},
+        required=[],
+        handler=global_cancel_and_restart,
     ),
 ]

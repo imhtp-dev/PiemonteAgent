@@ -76,7 +76,17 @@ async def verify_basic_info_and_transition(args: FlowArgs, flow_manager: FlowMan
     if action == "confirm":
         logger.info("✅ Basic patient information verified, proceeding to health center search")
 
-        # Proceed to health center search (Orange Box flow)
+        intent = flow_manager.state.get("intent")
+
+        if intent == "price_inquiry":
+            # Price inquiry — skip orange box/flow navigation, go straight to center search
+            from flows.nodes.booking import create_final_center_search_node
+            return {
+                "success": True,
+                "message": "Basic information verified, searching for health centers"
+            }, create_final_center_search_node()
+
+        # Normal booking flow — orange box
         from flows.nodes.booking import create_orange_box_node
         return {
             "success": True,

@@ -14,16 +14,20 @@ Global functions (available here and at every node):
 """
 
 from pipecat_flows import NodeConfig
+from pipecat_flows.types import ContextStrategy, ContextStrategyConfig
 from config.settings import settings
 
 
-def create_router_node() -> NodeConfig:
+def create_router_node(reset_context: bool = False) -> NodeConfig:
     """
     Create the initial router node.
     Global functions handle all info, booking, and transfer requests.
+
+    Args:
+        reset_context: If True, reset LLM context (used after cancel_and_restart).
     """
 
-    return NodeConfig(
+    node = NodeConfig(
         name="router",
         role_messages=[{
             "role": "system",
@@ -39,10 +43,12 @@ You are the initial contact point for incoming calls.
 6. call_graph - Clinic hours, closures, blood collection times
 7. request_transfer - Transfer to human operator (use when patient requests or info not found)
 8. start_booking - Start appointment booking flow
+9. cancel_and_restart - Cancel current booking and return to main menu
 
 **Decision logic:**
 - Patient asks info question → use appropriate info tool (knowledge_base, pricing, exam, clinic)
 - Patient wants to book → use start_booking
+- Patient wants to cancel current booking → use cancel_and_restart
 - Patient wants human → use request_transfer
 - If info tool fails to answer → offer to transfer
 
@@ -65,7 +71,11 @@ If patient wants to book a SPORTS MEDICINE visit (visita sportiva, medicina dell
         }],
         task_messages=[{
             "role": "system",
-            "content": f"""Greet the caller: 'Sono Ualà, assistente virtuale di Cerba HealthCare... puoi chiedermi informazioni o prenotare le prestazioni di poliambulatorio e radiologia, per laboratorio e medicina dello sport devo passarti ad un mio collega.'
+            "content": f"""{
+    "The previous booking has been cancelled. Say: 'La prenotazione è stata annullata. Come posso aiutarti?'"
+    if reset_context else
+    "Greet the caller: 'Sono Ualà, assistente virtuale di Cerba HealthCare... puoi chiedermi informazioni o prenotare le prestazioni di poliambulatorio e radiologia, per laboratorio e medicina dello sport devo passarti ad un mio collega.'"
+}
 
 **CRITICAL: You MUST call functions to answer questions. NEVER just say "I'm checking" without actually calling the function.**
 
@@ -85,6 +95,16 @@ If patient wants to book a SPORTS MEDICINE visit (visita sportiva, medicina dell
 - ⚠️ EXCEPTION: If booking is for SPORTS MEDICINE (visita sportiva, medicina dello sport, certificato sportivo, idoneità sportiva) → DO NOT call start_booking. Say sports medicine booking is not available via this service and ask if they want transfer to human operator.
 - ⚠️ DOCTOR NAME: If user says "prenotare [service] con Dottor/Dottoressa [name]" → DO NOT call start_booking yet. First tell them booking with a specific doctor is not available. Ask if they want to proceed with just the service. Only call start_booking (with service name only, NO doctor name) after they confirm yes. If they insist on the doctor → call request_transfer.
 
+**MULTI-SERVICE BOOKING:**
+If patient says "voglio prenotare X e Y" or "prenota X e anche Y":
+→ call start_booking with service_request="X", additional_service_request="Y"
+→ NEVER call start_booking twice. ONE call, first service in service_request, second in additional_service_request.
+Example: "RX caviglia destra e RX avampiede destro" → service_request="RX caviglia destra", additional_service_request="RX avampiede destro"
+
+**FOR CANCEL/RESTART:**
+- "Voglio cambiare prenotazione" / "annulla" / "ricominciamo" → call cancel_and_restart
+- This cancels any reserved slots and returns to the main menu
+
 **FOR TRANSFER:**
 - "Vorrei parlare con un operatore" → call request_transfer
 
@@ -99,3 +119,8 @@ If patient wants to book a SPORTS MEDICINE visit (visita sportiva, medicina dell
         functions=[],  # Empty - global functions handle everything
         respond_immediately=True  # Bot speaks first
     )
+
+    if reset_context:
+        node["context_strategy"] = ContextStrategyConfig(strategy=ContextStrategy.RESET)
+
+    return node

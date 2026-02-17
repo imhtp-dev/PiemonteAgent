@@ -490,7 +490,75 @@ async def global_request_transfer(
 
 
 # ============================================================================
-# 8. START BOOKING (Global) - TRANSITIONS
+# 8. CHECK SERVICE PRICE (Global) - TRANSITIONS
+# ============================================================================
+
+async def global_check_service_price(
+    args: FlowArgs,
+    flow_manager: FlowManager
+) -> Tuple[Dict[str, Any], NodeConfig]:
+    """
+    Start price inquiry flow when patient asks about cost/price of a service.
+    Reuses booking flow but skips unnecessary steps, presents just the price.
+    """
+    try:
+        service_request = args.get("service_request", "").strip()
+
+        logger.info(f"💰 [GLOBAL] Check Service Price: {service_request}")
+
+        # CHECK: Sports medicine services cannot be priced via this agent
+        if _is_capability_limitation(service_request):
+            logger.warning(f"🚫 Sports medicine price check: '{service_request}' → Redirecting to transfer")
+
+            flow_manager.state["transfer_reason"] = f"Prezzo medicina sportiva: {service_request}"
+            flow_manager.state["transfer_requested"] = True
+            flow_manager.state["transfer_type"] = "capability_limitation"
+
+            await _handle_transfer_escalation(flow_manager)
+
+            from flows.nodes.transfer import create_transfer_node
+            return {
+                "success": True,
+                "service_request": service_request,
+                "redirected_to_transfer": True,
+                "message": "Il prezzo per visite di medicina sportiva non è disponibile tramite questo servizio. Ti trasferisco a un operatore."
+            }, create_transfer_node()
+
+        # Set price inquiry intent
+        flow_manager.state["intent"] = "price_inquiry"
+        flow_manager.state["booking_in_progress"] = True
+        flow_manager.state["initial_booking_request"] = service_request
+        flow_manager.state["current_agent"] = "booking"
+
+        # Track for analytics
+        session_id = flow_manager.state.get("session_id")
+        if session_id:
+            call_extractor = get_call_extractor(session_id)
+            call_extractor.add_function_call(
+                function_name="check_service_price",
+                parameters={"service_request": service_request},
+                result={"action": "transition_to_price_inquiry"}
+            )
+
+        logger.success("✅ Transitioning to price inquiry flow")
+
+        from flows.nodes.greeting import create_greeting_node
+        return {
+            "success": True,
+            "service_request": service_request,
+            "message": "Starting price inquiry"
+        }, create_greeting_node(initial_booking_request=service_request if service_request else None)
+
+    except Exception as e:
+        logger.error(f"❌ Check service price error: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }, None  # Stay at current node on error
+
+
+# ============================================================================
+# 9. START BOOKING (Global) - TRANSITIONS
 # ============================================================================
 
 async def global_start_booking(
@@ -536,6 +604,12 @@ async def global_start_booking(
         flow_manager.state["initial_booking_request"] = service_request
         flow_manager.state["current_agent"] = "booking"
 
+        # Store additional service request if patient mentioned two services
+        additional = args.get("additional_service_request", "").strip()
+        if additional:
+            flow_manager.state["pending_additional_request"] = additional
+            logger.info(f"📋 Stored additional service request: {additional}")
+
         # Track for analytics
         session_id = flow_manager.state.get("session_id")
         if session_id:
@@ -561,6 +635,91 @@ async def global_start_booking(
             "success": False,
             "error": str(e)
         }, None  # Stay at current node on error
+
+
+async def global_cancel_and_restart(
+    args: FlowArgs,
+    flow_manager: FlowManager
+) -> Tuple[Dict[str, Any], NodeConfig]:
+    """
+    Cancel current booking (delete any reserved slots) and return to router.
+    Used when patient wants to abandon current booking and start fresh.
+    """
+    try:
+        logger.info("🔄 [GLOBAL] Cancel and restart booking")
+
+        # Delete any reserved slots
+        booked_slots = flow_manager.state.get("booked_slots", [])
+        cancelled_count = 0
+        if booked_slots:
+            from services.slotAgenda import delete_slot
+            for slot in booked_slots:
+                slot_uuid = slot.get("slot_uuid")
+                if slot_uuid:
+                    try:
+                        delete_response = delete_slot(slot_uuid)
+                        if delete_response.status_code == 200:
+                            cancelled_count += 1
+                            logger.info(f"🗑️ Cancelled slot: {slot_uuid}")
+                        else:
+                            logger.warning(f"⚠️ Failed to cancel slot {slot_uuid}: HTTP {delete_response.status_code}")
+                    except Exception as e:
+                        logger.error(f"❌ Error cancelling slot {slot_uuid}: {e}")
+
+        # Clear all booking-related state
+        booking_keys = [
+            "booking_in_progress", "initial_booking_request", "current_agent",
+            "selected_services", "selected_center", "booked_slots",
+            "pending_additional_request", "pending_additional_resolved",
+            "second_service_loop_active", "second_service_search_term",
+            "preferred_date", "preferred_time", "first_available_mode",
+            "time_preference", "start_time", "end_time",
+            "selected_slot", "available_slots",
+            "is_cerba_member", "cerba_membership_asked",
+            "final_health_centers", "pending_center_search_params",
+            "pending_slot_search_params", "pending_slot_booking_params",
+            "cached_all_slots", "cached_search_params",
+            "sorting_api_response", "sorting_api_success", "sorting_api_error",
+            "sorting_api_package_detected", "service_groups", "booking_scenario",
+            "current_group_index", "current_service_index",
+            "pending_search_term", "pending_search_limit",
+            "services_found", "current_search_term",
+            "generated_flow", "pending_flow_params",
+            "patient_gender", "patient_dob", "patient_address",
+            "current_search_radius", "intent",
+            "auto_date", "auto_start_time",
+            "llm_interpretation_reasoning", "llm_interpretation_summary",
+        ]
+        for key in booking_keys:
+            flow_manager.state.pop(key, None)
+
+        # Track for analytics
+        session_id = flow_manager.state.get("session_id")
+        if session_id:
+            call_extractor = get_call_extractor(session_id)
+            call_extractor.add_function_call(
+                function_name="cancel_and_restart",
+                parameters={},
+                result={"action": "cancelled_and_restarted", "cancelled_slots": cancelled_count}
+            )
+
+        logger.success(f"✅ Booking cancelled ({cancelled_count} slots deleted), returning to router")
+
+        from flows.nodes.router import create_router_node
+        return {
+            "success": True,
+            "cancelled_slots": cancelled_count,
+            "message": "Booking cancelled. Returning to main menu."
+        }, create_router_node(reset_context=True)
+
+    except Exception as e:
+        logger.error(f"❌ Cancel and restart error: {e}")
+        from flows.nodes.router import create_router_node
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Error during cancellation, returning to main menu."
+        }, create_router_node(reset_context=True)
 
 
 # ============================================================================

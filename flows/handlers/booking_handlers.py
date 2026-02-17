@@ -283,6 +283,46 @@ async def select_center_and_book(args: FlowArgs, flow_manager: FlowManager) -> T
     logger.info(f"🏥 Center selected: {selected_center.name} in {selected_center.city}")
 
     # ============================================================================
+    # PRICE INQUIRY: Skip sorting API + datetime, auto-search with tomorrow's date
+    # ============================================================================
+    intent = flow_manager.state.get("intent")
+
+    if intent == "price_inquiry":
+        selected_services = flow_manager.state.get("selected_services", [])
+        patient_gender = flow_manager.state.get("patient_gender", "m")
+        patient_dob = flow_manager.state.get("patient_dob", "")
+        current_service = selected_services[0] if selected_services else None
+        first_service_name = current_service.name if current_service else "your service"
+
+        tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        flow_manager.state["preferred_date"] = tomorrow
+        flow_manager.state["booking_scenario"] = "legacy"
+        flow_manager.state["pending_slot_search_params"] = {
+            "selected_center": selected_center,
+            "selected_services": selected_services,
+            "preferred_date": tomorrow,
+            "start_time": None,
+            "end_time": None,
+            "time_preference": "any time",
+            "patient_gender": patient_gender,
+            "patient_dob": patient_dob,
+            "current_service_index": 0,
+            "current_service": current_service
+        }
+
+        tts_message = f"Sto verificando il prezzo per {first_service_name}. Attendi un momento."
+
+        logger.info(f"💰 Price inquiry: skipping sorting API + datetime, auto-searching slots for {tomorrow}")
+
+        from flows.nodes.booking import create_slot_search_processing_node
+        return {
+            "success": True,
+            "center_name": selected_center.name,
+            "intent": "price_inquiry"
+        }, create_slot_search_processing_node(first_service_name, tts_message)
+
+    # ============================================================================
     # SORTING API INTEGRATION
     # Call the sorting API to get optimized service packages for this center
     # ============================================================================
@@ -488,58 +528,90 @@ async def select_center_and_book(args: FlowArgs, flow_manager: FlowManager) -> T
     # END SORTING API INTEGRATION
     # ============================================================================
 
-    from flows.nodes.booking import create_cerba_membership_node
+    # Get service name for first appointment from state
+    first_service_name = "your appointment"  # Default fallback
+    if "service_groups" in flow_manager.state and flow_manager.state["service_groups"]:
+        service_groups = flow_manager.state["service_groups"]
+        booking_scenario = flow_manager.state.get("booking_scenario", "separate")
+        if booking_scenario == "separate":
+            first_group_services = service_groups[0]["services"]
+            first_service_name = " più ".join([svc.name for svc in first_group_services])
+        elif booking_scenario in ["bundle", "combined"]:
+            first_group_services = service_groups[0]["services"]
+            first_service_name = " più ".join([svc.name for svc in first_group_services])
+    elif "selected_services" in flow_manager.state and flow_manager.state["selected_services"]:
+        first_service = flow_manager.state["selected_services"][0]
+        first_service_name = first_service.name
+
+    center_name = selected_center.name
+
+    from flows.nodes.booking import create_collect_datetime_node
     return {
         "success": True,
         "center_name": selected_center.name,
         "center_city": selected_center.city,
         "center_address": selected_center.address,
         "sorting_api_called": True
-    }, create_cerba_membership_node()
+    }, create_collect_datetime_node(first_service_name, False, center_name)
 
 
 async def check_cerba_membership_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
-    """Check if user is a Cerba member and transition to date/time collection"""
+    """Check if user is a Cerba member and transition to booking summary.
+
+    Called AFTER slot reservation. Recalculates prices in booked_slots
+    using cerba_card_price if user is a member, then shows summary.
+    """
     is_member = args.get("is_cerba_member", False)
-    
+
     # Store membership status for pricing calculations
     flow_manager.state["is_cerba_member"] = is_member
-    
+    flow_manager.state["cerba_membership_asked"] = True
+
     logger.info(f"💳 Cerba membership status: {'Member' if is_member else 'Non-member'}")
 
-    # Get service name for first appointment from state
-    first_service_name = "your appointment"  # Default fallback
+    # Recalculate prices in booked_slots if user is a cerba member
+    booked_slots = flow_manager.state.get("booked_slots", [])
+    if is_member:
+        for slot_data in booked_slots:
+            health_services = slot_data.get("health_services", [])
+            if health_services:
+                service = health_services[0]
+                cerba_price = service.get("cerba_card_price")
+                if cerba_price is not None:
+                    # Recalculate with cerba pricing (handle bundle multiplication)
+                    booking_scenario = flow_manager.state.get("booking_scenario", "legacy")
+                    service_groups = flow_manager.state.get("service_groups", [])
 
-    # Try to get service name from various state locations
-    if "service_groups" in flow_manager.state and flow_manager.state["service_groups"]:
-        service_groups = flow_manager.state["service_groups"]
-        booking_scenario = flow_manager.state.get("booking_scenario", "separate")
+                    # Check if this slot belongs to a bundled group
+                    is_bundled = False
+                    service_count = 1
+                    if booking_scenario in ["bundle", "separate"] and service_groups:
+                        for group in service_groups:
+                            if group.get("is_group", False) and len(group["services"]) > 1:
+                                is_bundled = True
+                                service_count = len(group["services"])
+                                break
 
-        if booking_scenario == "separate":
-            # For separate appointments, get the first group's services
-            first_group_services = service_groups[0]["services"]
-            first_service_name = " più ".join([svc.name for svc in first_group_services])
-        elif booking_scenario in ["bundle", "combined"]:
-            # For bundle/combined, get all services in the first (and only) group
-            first_group_services = service_groups[0]["services"]
-            first_service_name = " più ".join([svc.name for svc in first_group_services])
-    elif "selected_services" in flow_manager.state and flow_manager.state["selected_services"]:
-        # Legacy fallback
-        first_service = flow_manager.state["selected_services"][0]
-        first_service_name = first_service.name
+                    old_price = slot_data.get("price", 0)
+                    if is_bundled and service_count > 1:
+                        slot_data["price"] = cerba_price * service_count
+                    else:
+                        slot_data["price"] = cerba_price
+                    logger.info(f"💰 Cerba price recalc: {old_price}€ → {slot_data['price']}€ for {slot_data.get('service_name', 'unknown')}")
 
-    # Get center name from state for context after RESET
+    # Build booking summary
+    selected_services = flow_manager.state.get("selected_services", [])
     selected_center = flow_manager.state.get("selected_center")
-    center_name = selected_center.name if selected_center else None
+    total_cost = sum(s.get("price", 0) for s in booked_slots)
 
-    logger.info(f"📅 Asking for date/time for first appointment: {first_service_name}")
+    logger.info(f"📋 Proceeding to booking summary. Total cost: {total_cost}€")
 
-    from flows.nodes.booking import create_collect_datetime_node
+    from flows.nodes.booking import create_booking_summary_confirmation_node
     return {
         "success": True,
         "is_cerba_member": is_member,
         "membership_status": "member" if is_member else "non-member"
-    }, create_collect_datetime_node(first_service_name, False, center_name)
+    }, create_booking_summary_confirmation_node(selected_services, booked_slots, selected_center, total_cost, is_member)
 
 
 
@@ -1109,6 +1181,21 @@ async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowM
 
             logger.success(f"✅ Found {len(slots_response)} available slots for {current_service_name}")
 
+            # Price inquiry: present prices instead of slot selection
+            intent = flow_manager.state.get("intent")
+            if intent == "price_inquiry":
+                from flows.nodes.pricing import create_price_info_node
+                return {
+                    "success": True,
+                    "slots_count": len(slots_response),
+                    "service_name": current_service_name,
+                    "message": "Price information retrieved"
+                }, create_price_info_node(
+                    slots=slots_response,
+                    service_name=current_service_name,
+                    center_name=selected_center.name
+                )
+
             from flows.nodes.booking import create_slot_selection_node
 
             # Pass user preferences for smart filtering
@@ -1377,24 +1464,18 @@ async def select_slot_and_book(args: FlowArgs, flow_manager: FlowManager) -> Tup
     flow_manager.state["selected_slot"] = selected_slot
     logger.info(f"🔍 DEBUG: State after storing selected_slot: selected_slot key exists = {'selected_slot' in flow_manager.state}")
 
-    # Extract pricing based on Cerba membership
-    is_cerba_member = flow_manager.state.get("is_cerba_member", False)
+    # Extract pricing — always use non-cerba price at selection time.
+    # Cerba membership asked AFTER reservation, prices recalculated then.
     health_services = selected_slot.get("health_services", [])
 
-    logger.info(f"🔍 DEBUG: is_cerba_member = {is_cerba_member}")
     logger.info(f"🔍 DEBUG: health_services = {health_services}")
 
-    # CRITICAL: Extract and store price for this slot
     slot_price = 0
     if health_services:
         service = health_services[0]
-        slot_price = service.get("cerba_card_price") if is_cerba_member else service.get("price")
-        if slot_price is None:
-            # Fallback: try to get price (non-Cerba) if cerba_card_price is None
-            slot_price = service.get("price", 0)
+        slot_price = service.get("price", 0)
         logger.info(f"💰 Price from slot health_services: {slot_price}")
 
-    # Store price in state for booking
     flow_manager.state["slot_price"] = slot_price
     logger.info(f"💰 Stored slot_price in state: {slot_price}")
 
@@ -1404,27 +1485,17 @@ async def select_slot_and_book(args: FlowArgs, flow_manager: FlowManager) -> Tup
     # NOTE: Slot reservation will happen in the next step (perform_slot_booking_and_transition)
     # This avoids double reservation attempts
 
-    # Get required data for booking summary
+    # Get required data for booking
     selected_services = flow_manager.state.get("selected_services", [])
     selected_center = flow_manager.state.get("selected_center")
 
     if not selected_services or not selected_center:
         return {"success": False, "message": "Missing booking information"}, None
 
-    # Calculate total cost
-    total_cost = 0
-    selected_slots = [selected_slot]  # For now, single slot
+    # Calculate total cost (non-cerba prices)
+    total_cost = sum(s.get("price", 0) for s in health_services)
 
-    for service_data in health_services:
-        price = service_data.get("cerba_card_price") if is_cerba_member else service_data.get("price", 0)
-        total_cost += price
-
-    # Store slot price for later use
-    individual_slot_price = 0
-    if health_services:
-        service_data = health_services[0]
-        individual_slot_price = service_data.get("cerba_card_price") if is_cerba_member else service_data.get("price", 0)
-
+    individual_slot_price = health_services[0].get("price", 0) if health_services else 0
     flow_manager.state["slot_price"] = individual_slot_price
 
     # Go to slot booking creation first (this will reserve the slot)
@@ -1498,6 +1569,46 @@ async def create_booking_and_transition(args: FlowArgs, flow_manager: FlowManage
             "success": False,
             "message": "Slot booking failed. Please try again."
         }, create_error_node("Slot booking failed. Please try again.")
+
+
+async def _proceed_to_cerba_or_summary(flow_manager, slot_uuid) -> Tuple[Dict[str, Any], NodeConfig]:
+    """Helper: after all bookings complete, check cerba pricing then show summary."""
+    booked_slots = flow_manager.state.get("booked_slots", [])
+    has_cerba_pricing = False
+    for slot_data in booked_slots:
+        for hs in slot_data.get("health_services", []):
+            if hs.get("cerba_card_price") is not None:
+                has_cerba_pricing = True
+                break
+        if has_cerba_pricing:
+            break
+
+    if has_cerba_pricing:
+        logger.info("💳 Cerba card pricing available on booked slots, asking membership")
+        from flows.nodes.booking import create_cerba_membership_node
+        return {
+            "success": True,
+            "slot_id": slot_uuid,
+            "all_slots_created": True,
+            "total_slots": len(booked_slots),
+            "message": "Perfect! Your time slot has been reserved."
+        }, create_cerba_membership_node()
+    else:
+        logger.info("💳 No cerba card pricing on any slot, skipping membership question")
+        flow_manager.state["is_cerba_member"] = False
+
+        selected_services = flow_manager.state.get("selected_services", [])
+        selected_center = flow_manager.state.get("selected_center")
+        total_cost = sum(s.get("price", 0) for s in booked_slots)
+
+        from flows.nodes.booking import create_booking_summary_confirmation_node
+        return {
+            "success": True,
+            "slot_id": slot_uuid,
+            "all_slots_created": True,
+            "total_slots": len(booked_slots),
+            "message": "Perfect! Your time slot has been reserved."
+        }, create_booking_summary_confirmation_node(selected_services, booked_slots, selected_center, total_cost, False)
 
 
 async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
@@ -1596,15 +1707,14 @@ async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: Flow
                 current_service_name = selected_services[current_service_index].name if selected_services else "Service"
 
             # Extract base price from current selected_slot
-            is_cerba_member = flow_manager.state.get("is_cerba_member", False)
+            # NOTE: Always use non-cerba price at reservation time.
+            # Cerba membership is asked AFTER reservation, prices recalculated then.
             health_services = selected_slot.get("health_services", [])
 
             slot_price = 0
             if health_services:
                 service = health_services[0]
-                base_price = service.get("cerba_card_price") if is_cerba_member else service.get("price", 0)
-                if base_price is None:
-                    base_price = service.get("price", 0)
+                base_price = service.get("price", 0)
 
                 # BUNDLED SERVICE PRICE MULTIPLICATION
                 # If this is a bundled group with multiple services, multiply the base price
@@ -1786,30 +1896,41 @@ async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: Flow
                 )
 
             else:
-                # All groups/services booked - show booking summary
-                logger.info(f"🎯 All bookings completed, showing booking summary")
+                # All groups/services booked
+                logger.info(f"🎯 All bookings completed")
                 logger.info("=" * 80)
 
-                # Get required data for booking summary
-                selected_services = flow_manager.state.get("selected_services", [])
-                selected_center = flow_manager.state.get("selected_center")
-                is_cerba_member = flow_manager.state.get("is_cerba_member", False)
+                # Check if there's a pending additional service to book
+                pending = flow_manager.state.get("pending_additional_request")
+                already_resolved = flow_manager.state.get("pending_additional_resolved", False)
 
-                # Calculate total cost
-                total_cost = 0
-                selected_slots = flow_manager.state.get("booked_slots", [])
+                if pending and not already_resolved:
+                    logger.info(f"📋 Starting second service loop: '{pending}'")
+                    flow_manager.state.pop("pending_additional_request", None)
+                    flow_manager.state["second_service_loop_active"] = True
 
-                for slot_data in selected_slots:
-                    total_cost += slot_data.get("price", 0)
+                    # Clear first-booking slot state (keep patient data, center, booked_slots)
+                    for key in ["available_slots", "cached_all_slots", "cached_search_params",
+                                "first_available_mode", "booking_scenario", "service_groups",
+                                "current_group_index", "current_service_index",
+                                "pending_slot_search_params", "selected_slot"]:
+                        flow_manager.state.pop(key, None)
 
-                from flows.nodes.booking import create_booking_summary_confirmation_node
-                return {
-                    "success": True,
-                    "slot_id": slot_uuid,
-                    "all_slots_created": True,
-                    "total_slots": len(flow_manager.state["booked_slots"]),
-                    "message": "Perfect! Your time slot has been reserved."
-                }, create_booking_summary_confirmation_node(selected_services, selected_slots, selected_center, total_cost, is_cerba_member)
+                    # Store search term for the handler to pick up
+                    flow_manager.state["pending_search_term"] = pending
+                    flow_manager.state["second_service_search_term"] = pending
+
+                    # Get first service name for confirmation message
+                    booked_slots = flow_manager.state.get("booked_slots", [])
+                    first_service_name = booked_slots[-1].get("service_name", "") if booked_slots else ""
+                    if first_service_name:
+                        tts = f"Perfetto! La prenotazione per {first_service_name} è stata confermata. Ora procediamo con {pending}."
+                    else:
+                        tts = f"Perfetto! La prima prenotazione è stata confermata. Ora procediamo con {pending}."
+                    from flows.nodes.second_service import create_second_service_search_node
+                    return {"success": True, "slot_id": slot_uuid}, create_second_service_search_node(pending, tts)
+                else:
+                    return await _proceed_to_cerba_or_summary(flow_manager, slot_uuid)
         else:
             # Handle specific error cases
             error_msg = f"Slot reservation failed: HTTP {status_code}"
@@ -2241,21 +2362,39 @@ async def skip_current_service_handler(args: FlowArgs, flow_manager: FlowManager
         logger.info("=" * 80)
 
         if booked_slots:
-            # Calculate total cost from already-booked slots
-            total_cost = sum(slot.get("price", 0) for slot in booked_slots)
-
-            logger.info(f"✅ Proceeding to booking summary with {len(booked_slots)} booked service(s)")
-            logger.info(f"   Total cost: {total_cost}€")
-
-            from flows.nodes.booking import create_booking_summary_confirmation_node
-            return {
-                "success": True,
-                "skipped_service": skipped_service,
-                "booked_count": len(booked_slots),
-                "message": f"Skipped {skipped_service}. Proceeding with {len(booked_slots)} booked service(s)."
-            }, create_booking_summary_confirmation_node(
-                selected_services, booked_slots, selected_center, total_cost, is_cerba_member
+            # Check if cerba card question needed before summary
+            has_cerba_pricing = any(
+                hs.get("cerba_card_price") is not None
+                for slot_data in booked_slots
+                for hs in slot_data.get("health_services", [])
             )
+
+            if has_cerba_pricing and not flow_manager.state.get("cerba_membership_asked", False):
+                logger.info("💳 Cerba pricing available, asking membership before summary")
+                from flows.nodes.booking import create_cerba_membership_node
+                return {
+                    "success": True,
+                    "skipped_service": skipped_service,
+                    "booked_count": len(booked_slots),
+                    "message": f"Skipped {skipped_service}. Proceeding with {len(booked_slots)} booked service(s)."
+                }, create_cerba_membership_node()
+            else:
+                if not has_cerba_pricing:
+                    flow_manager.state["is_cerba_member"] = False
+
+                total_cost = sum(slot.get("price", 0) for slot in booked_slots)
+                logger.info(f"✅ Proceeding to booking summary with {len(booked_slots)} booked service(s)")
+                logger.info(f"   Total cost: {total_cost}€")
+
+                from flows.nodes.booking import create_booking_summary_confirmation_node
+                return {
+                    "success": True,
+                    "skipped_service": skipped_service,
+                    "booked_count": len(booked_slots),
+                    "message": f"Skipped {skipped_service}. Proceeding with {len(booked_slots)} booked service(s)."
+                }, create_booking_summary_confirmation_node(
+                    selected_services, booked_slots, selected_center, total_cost, flow_manager.state.get("is_cerba_member", False)
+                )
         else:
             # No services booked at all - end conversation gracefully
             logger.warning(f"⚠️ No services booked and user wants to skip. Ending conversation.")

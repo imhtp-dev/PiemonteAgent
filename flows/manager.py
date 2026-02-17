@@ -230,7 +230,37 @@ async def initialize_flow_manager(flow_manager: TrackedFlowManager, start_node: 
             # Flow completion flags
             "center_selected": True,
             "sorting_api_success": True,
-            "services_finalized": True
+            "services_finalized": True,
+
+            # Booked slots (cerba handler now transitions to summary, needs this)
+            "booked_slots": [
+                {
+                    "slot_uuid": "test-slot-uuid-1",
+                    "service_name": "Visita Ortopedica (Prima Visita)",
+                    "start_time": "2026-03-15T09:00:00+00:00",
+                    "end_time": "2026-03-15T09:30:00+00:00",
+                    "price": 80.0,
+                    "health_services": [{
+                        "name": "Visita Ortopedica (Prima Visita)",
+                        "uuid": "1cc793b7-4a8b-4c54-ac09-3c7ca7e5a168",
+                        "price": 80.0,
+                        "cerba_card_price": 65.0
+                    }]
+                },
+                {
+                    "slot_uuid": "test-slot-uuid-2",
+                    "service_name": "RX Caviglia Destra",
+                    "start_time": "2026-03-15T10:30:00+00:00",
+                    "end_time": "2026-03-15T11:00:00+00:00",
+                    "price": 45.0,
+                    "health_services": [{
+                        "name": "RX Caviglia Destra",
+                        "uuid": "9a93d65f-396a-45e4-9284-94481bdd2b51",
+                        "price": 45.0,
+                        "cerba_card_price": 35.0
+                    }]
+                }
+            ]
         })
 
         # Initialize at Cerba Card question
