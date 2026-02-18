@@ -34,7 +34,7 @@ class Settings:
             "api_key": self.api_keys["deepgram"],
             "sample_rate": 16000,
             "model": "nova-3-general",  # Upgraded to Nova-3 for 53.4% better accuracy
-            "language": "en",
+            "language": os.getenv("DEEPGRAM_STT_LANGUAGE", "it"),
             "encoding": "linear16",
             "channels": 1,
             "interim_results": True,
@@ -55,7 +55,7 @@ class Settings:
         return {
             "api_key": self.api_keys["azure_speech_key"],
             "region": self.api_keys["azure_speech_region"],
-            "language": "it-IT",  # it-IT for Italian, en-US for English
+            "language": os.getenv("AZURE_STT_LANGUAGE", "it-IT"),
             "sample_rate": 16000,
             "endpoint_id": os.getenv("AZURE_SPEECH_ENDPOINT_ID"),  # Optional custom model endpoint
             # Phrase list for custom Italian healthcare keywords
@@ -118,8 +118,8 @@ class Settings:
 
     @property
     def agent_language(self) -> str:
-        """Agent language for analysis outputs"""
-        return "English"  # Change to "English" for English testing
+        """Agent language from env, fallback Italian"""
+        return os.getenv("AGENT_LANGUAGE", "Italian")
 
     @property
     def current_year(self) -> str:
