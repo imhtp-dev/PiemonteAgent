@@ -117,11 +117,12 @@ Step 4 — Repeat until you reach an end condition.
 
 ## SERVICE TRACKING
 
-Maintain a list of ALL services the patient selects throughout navigation:
-- The main service (from root level)
-- Any optionals, prescriptions, or specialist visits selected along the way
+IMPORTANT: {service_name} is ALREADY saved in the system. Do NOT include it in additional_services.
+additional_services is ONLY for services the patient EXPLICITLY selects from list_health_services during navigation.
 
-For each selected service, extract from the PARALLEL ARRAYS at the SAME index:
+If the patient says NO to all optional services → call finalize_services with additional_services=[] (empty array).
+
+For each service the patient explicitly selects, extract from the PARALLEL ARRAYS at the SAME index:
 - uuid → from list_health_servicesUUID[index]
 - name → from list_health_services[index]
 - code → from health_service_code[index]
@@ -134,7 +135,8 @@ For each selected service, extract from the PARALLEL ARRAYS at the SAME index:
 - Never mention UUIDs, codes, or sectors to the patient
 - Follow YES/NO branches strictly — never mix them
 - Call finalize_services ONLY when you reach "action": "save_cart" or a terminal node
-- Include ALL tracked services in the additional_services array"""
+- NEVER include {service_name} in additional_services — it is already saved
+- If patient declined all optionals, additional_services MUST be []"""
         }],
         task_messages=[{
             "role": "system",
@@ -1071,7 +1073,7 @@ def create_slot_refresh_node(service_name: str) -> NodeConfig:
     )
 
 
-def create_no_slots_node(date: str, time_preference: str = "any time", first_appointment_date: str = None, is_automatic_search: bool = False, has_booked_slots: bool = False) -> NodeConfig:
+def create_no_slots_node(date: str, time_preference: str = "any time", first_appointment_date: str = None, is_automatic_search: bool = False, has_booked_slots: bool = False, booked_slots_info: str = "") -> NodeConfig:
     """Create node when no slots are available - with human-like alternative suggestions
 
     Args:
@@ -1080,6 +1082,7 @@ def create_no_slots_node(date: str, time_preference: str = "any time", first_app
         first_appointment_date: Date of first appointment (for 2nd+ services)
         is_automatic_search: True if this is automatic search for 2nd+ service (user didn't choose the date)
         has_booked_slots: True if there are already-booked slots from previous services
+        booked_slots_info: Human-readable summary of already-booked services
     """
 
     # Build constraint message for multi-service bookings
@@ -1089,6 +1092,11 @@ def create_no_slots_node(date: str, time_preference: str = "any time", first_app
     if first_appointment_date:
         date_constraint_msg = f" IMPORTANT: Since this is your second appointment, it must be scheduled on or after your first appointment date ({first_appointment_date}). Please do not suggest any dates before {first_appointment_date}."
         system_constraint_msg = f"CRITICAL CONSTRAINT: This is a multi-service booking. The first appointment is on {first_appointment_date}. You MUST NOT suggest any dates before {first_appointment_date}. Only suggest dates on {first_appointment_date} or later dates. "
+
+    # Build already-booked context for multi-service bookings
+    booked_context = ""
+    if booked_slots_info:
+        booked_context = f"ALREADY RESERVED (mention this to the patient): {booked_slots_info}. "
 
     # Different message tone for automatic search (2nd+ services) vs user-chosen date (1st service)
     if is_automatic_search and first_appointment_date:
@@ -1146,7 +1154,7 @@ def create_no_slots_node(date: str, time_preference: str = "any time", first_app
         name="no_slots_available",
         role_messages=[{
             "role": "system",
-            "content": f"{system_constraint_msg}We are in {settings.current_year}. When there are no available slots, be helpful and suggest alternatives in a human way. Offer to search for different dates or times.{skip_instruction} Never mention technical details or UUIDs. NEVER say the booking is confirmed or completed - the booking has NOT been finalized yet. {settings.language_config}"
+            "content": f"{system_constraint_msg}{booked_context}We are in {settings.current_year}. When there are no available slots, be helpful and suggest alternatives in a human way. Offer to search for different dates or times.{skip_instruction} Never mention technical details or UUIDs. NEVER say the booking is confirmed or completed - the booking has NOT been finalized yet. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",

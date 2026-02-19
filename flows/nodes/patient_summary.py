@@ -29,7 +29,12 @@ def create_patient_summary_node(patient_data: dict) -> NodeConfig:
         name="patient_summary_confirmation",
         role_messages=[{
             "role": "system",
-            "content": f"Inform patient that their details are found in Cerba database and confirm phone number for SMS booking confirmation. Listen for phone confirmation or change request. {settings.language_config}"
+            "content": f"""Inform patient that their details are found in Cerba database and confirm phone number for SMS booking confirmation.
+
+CRITICAL: When the patient says "si", "ok", "procedi", "confermo", or any confirmation → IMMEDIATELY call handle_summary_response with action="confirm_phone". Do NOT just acknowledge verbally — you MUST call the function.
+When the patient wants to change the number → call handle_summary_response with action="change_phone".
+
+Never say "booking confirmed" or "I'll let you know" — just call the function. {settings.language_config}"""
         }],
         task_messages=[{
             "role": "system",

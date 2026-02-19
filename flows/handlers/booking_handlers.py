@@ -17,6 +17,24 @@ from services.llm_interpretation import interpret_sorting_scenario
 from config.settings import settings
 
 
+def _build_booked_slots_summary(flow_manager: FlowManager) -> str:
+    """Build human-readable summary of already-booked services for prompts."""
+    booked_slots = flow_manager.state.get("booked_slots", [])
+    if not booked_slots:
+        return ""
+    from services.timezone_utils import utc_to_italian_display
+    parts = []
+    for slot in booked_slots:
+        name = slot.get("service_name", "Unknown")
+        italian_start = utc_to_italian_display(slot.get("start_time", ""))
+        if italian_start:
+            dt = datetime.strptime(italian_start, "%Y-%m-%d %H:%M:%S")
+            parts.append(f"{name} il {dt.strftime('%d/%m/%Y')} alle {dt.strftime('%-H:%M')}")
+        else:
+            parts.append(name)
+    return "; ".join(parts)
+
+
 async def search_final_centers_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
     """Search health centers with all selected services and transition to center selection"""
     try:
@@ -926,10 +944,11 @@ async def update_date_and_search_slots(args: FlowArgs, flow_manager: FlowManager
             # Go to no slots node with suggestion for different dates
             from flows.nodes.booking import create_no_slots_node
             has_booked = bool(flow_manager.state.get("booked_slots"))
+            booked_info = _build_booked_slots_summary(flow_manager) if has_booked else ""
             return {
                 "success": False,
                 "message": error_message
-            }, create_no_slots_node(preferred_date, flow_manager.state.get("time_preference", "any time"), has_booked_slots=has_booked)
+            }, create_no_slots_node(preferred_date, flow_manager.state.get("time_preference", "any time"), has_booked_slots=has_booked, booked_slots_info=booked_info)
 
     except (ValueError, TypeError) as e:
         logger.error(f"Date parsing error: {e}")
@@ -1291,10 +1310,11 @@ async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowM
 
             from flows.nodes.booking import create_no_slots_node
             has_booked = bool(flow_manager.state.get("booked_slots"))
+            booked_info = _build_booked_slots_summary(flow_manager) if has_booked else ""
             return {
                 "success": False,
                 "message": error_message
-            }, create_no_slots_node(preferred_date, time_preference, first_appointment_date, is_automatic_search, has_booked_slots=has_booked)
+            }, create_no_slots_node(preferred_date, time_preference, first_appointment_date, is_automatic_search, has_booked_slots=has_booked, booked_slots_info=booked_info)
 
     except Exception as e:
         logger.error(f"Slot search error: {e}")
@@ -2320,10 +2340,11 @@ async def search_different_date_handler(args: FlowArgs, flow_manager: FlowManage
             logger.warning(f"⚠️ No slots found on {new_date}")
             from flows.nodes.booking import create_no_slots_node
             has_booked = bool(flow_manager.state.get("booked_slots"))
+            booked_info = _build_booked_slots_summary(flow_manager) if has_booked else ""
             return {
                 "success": False,
                 "message": f"No available slots found on {new_date}"
-            }, create_no_slots_node(new_date, time_preference, has_booked_slots=has_booked)
+            }, create_no_slots_node(new_date, time_preference, has_booked_slots=has_booked, booked_slots_info=booked_info)
 
     except Exception as e:
         logger.error(f"❌ Error searching different date: {e}")
