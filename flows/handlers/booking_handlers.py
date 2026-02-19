@@ -132,12 +132,12 @@ async def perform_center_search_and_transition(args: FlowArgs, flow_manager: Flo
             health_centers = await loop.run_in_executor(None, _search_centers)
         except Exception as e:
             logger.error(f"❌ API error during center search: {e}")
-            from flows.nodes.transfer import create_transfer_node
+            from flows.nodes.transfer import create_transfer_node_with_escalation
             return {
                 "success": False,
                 "error": str(e),
                 "message": "Mi dispiace, c'è un problema tecnico. Ti trasferisco a un operatore."
-            }, create_transfer_node()
+            }, await create_transfer_node_with_escalation(flow_manager)
 
         # Store current radius for tracking
         flow_manager.state["search_radius_used"] = current_radius or 22
@@ -1136,12 +1136,12 @@ async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowM
         # Handle API failure after all retries
         if slot_error:
             logger.error(f"❌ Slot search failed after 2 retries: {slot_error}")
-            from flows.nodes.transfer import create_transfer_node
+            from flows.nodes.transfer import create_transfer_node_with_escalation
             return {
                 "success": False,
                 "error": str(slot_error),
                 "message": "Mi dispiace, c'è un problema tecnico con il sistema di prenotazione. Ti trasferisco a un operatore che potrà aiutarti."
-            }, create_transfer_node()
+            }, await create_transfer_node_with_escalation(flow_manager)
 
         # CRITICAL: Client-side filtering if start_time constraint exists
         # The API doesn't always respect start_time parameter, so we filter client-side
@@ -1685,12 +1685,12 @@ async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: Flow
         # Handle API failure after all retries
         if slot_error:
             logger.error(f"❌ Slot reservation failed after 2 retries: {slot_error}")
-            from flows.nodes.transfer import create_transfer_node
+            from flows.nodes.transfer import create_transfer_node_with_escalation
             return {
                 "success": False,
                 "error": str(slot_error),
                 "message": "Mi dispiace, c'è un problema tecnico con la prenotazione. Ti trasferisco a un operatore."
-            }, create_transfer_node()
+            }, await create_transfer_node_with_escalation(flow_manager)
 
         status_code, slot_uuid, created_at = slot_result
 

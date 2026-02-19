@@ -151,8 +151,8 @@ class TrackedFlowManager(FlowManager):
                 span.set_attribute("handler.triggered_transfer", should_transfer)
 
                 if should_transfer:
-                    from flows.nodes.transfer import create_transfer_node
-                    return {"success": False, "error": str(e)}, create_transfer_node()
+                    from flows.nodes.transfer import create_transfer_node_with_escalation
+                    return {"success": False, "error": str(e)}, await create_transfer_node_with_escalation(self)
                 raise  # Re-raise if not transferring
 
             # Parse result - could be dict or tuple(dict, NodeConfig)
@@ -209,8 +209,8 @@ class TrackedFlowManager(FlowManager):
                         # Override next_node to transfer
                         logger.warning(f"🚨 Transferring to operator after {handler_name} failure")
                         span.set_attribute("handler.outcome", "transfer_triggered")
-                        from flows.nodes.transfer import create_transfer_node
-                        return result_dict, create_transfer_node()
+                        from flows.nodes.transfer import create_transfer_node_with_escalation
+                        return result_dict, await create_transfer_node_with_escalation(self)
             else:
                 # Success - reset failure counter UNLESS pending_transfer
                 # pending_transfer means user requested transfer but we're asking what they need

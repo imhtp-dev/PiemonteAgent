@@ -72,18 +72,17 @@ async def global_knowledge_base(
             return _add_booking_reminder(response, flow_manager), None  # Stay at current node
         else:
             logger.error(f"❌ Knowledge base failed: {result.error}")
-            # On failure, offer transfer
-            from flows.nodes.transfer import create_transfer_node
+            from flows.nodes.transfer import create_transfer_node_with_escalation
             return {
                 "success": False,
                 "error": result.error,
                 "message": "Information not found"
-            }, create_transfer_node()
+            }, await create_transfer_node_with_escalation(flow_manager)
 
     except Exception as e:
         logger.error(f"❌ Knowledge base error: {e}")
-        from flows.nodes.transfer import create_transfer_node
-        return {"success": False, "error": str(e)}, create_transfer_node()
+        from flows.nodes.transfer import create_transfer_node_with_escalation
+        return {"success": False, "error": str(e)}, await create_transfer_node_with_escalation(flow_manager)
 
 
 # ============================================================================
@@ -151,13 +150,13 @@ async def global_competitive_pricing(
             return _add_booking_reminder(response, flow_manager), None
         else:
             logger.error(f"❌ Competitive pricing failed: {result.error}")
-            from flows.nodes.transfer import create_transfer_node
-            return {"success": False, "error": result.error}, create_transfer_node()
+            from flows.nodes.transfer import create_transfer_node_with_escalation
+            return {"success": False, "error": result.error}, await create_transfer_node_with_escalation(flow_manager)
 
     except Exception as e:
         logger.error(f"❌ Competitive pricing error: {e}")
-        from flows.nodes.transfer import create_transfer_node
-        return {"success": False, "error": str(e)}, create_transfer_node()
+        from flows.nodes.transfer import create_transfer_node_with_escalation
+        return {"success": False, "error": str(e)}, await create_transfer_node_with_escalation(flow_manager)
 
 
 # ============================================================================
@@ -208,13 +207,13 @@ async def global_non_competitive_pricing(
             return _add_booking_reminder(response, flow_manager), None
         else:
             logger.error(f"❌ Non-competitive pricing failed: {result.error}")
-            from flows.nodes.transfer import create_transfer_node
-            return {"success": False, "error": result.error}, create_transfer_node()
+            from flows.nodes.transfer import create_transfer_node_with_escalation
+            return {"success": False, "error": result.error}, await create_transfer_node_with_escalation(flow_manager)
 
     except Exception as e:
         logger.error(f"❌ Non-competitive pricing error: {e}")
-        from flows.nodes.transfer import create_transfer_node
-        return {"success": False, "error": str(e)}, create_transfer_node()
+        from flows.nodes.transfer import create_transfer_node_with_escalation
+        return {"success": False, "error": str(e)}, await create_transfer_node_with_escalation(flow_manager)
 
 
 # ============================================================================
@@ -266,13 +265,13 @@ async def global_exam_by_visit(
             return _add_booking_reminder(response, flow_manager), None
         else:
             logger.error(f"❌ Exam by visit failed: {result.error}")
-            from flows.nodes.transfer import create_transfer_node
-            return {"success": False, "error": result.error}, create_transfer_node()
+            from flows.nodes.transfer import create_transfer_node_with_escalation
+            return {"success": False, "error": result.error}, await create_transfer_node_with_escalation(flow_manager)
 
     except Exception as e:
         logger.error(f"❌ Exam by visit error: {e}")
-        from flows.nodes.transfer import create_transfer_node
-        return {"success": False, "error": str(e)}, create_transfer_node()
+        from flows.nodes.transfer import create_transfer_node_with_escalation
+        return {"success": False, "error": str(e)}, await create_transfer_node_with_escalation(flow_manager)
 
 
 # ============================================================================
@@ -324,13 +323,13 @@ async def global_exam_by_sport(
             return _add_booking_reminder(response, flow_manager), None
         else:
             logger.error(f"❌ Exam by sport failed: {result.error}")
-            from flows.nodes.transfer import create_transfer_node
-            return {"success": False, "error": result.error}, create_transfer_node()
+            from flows.nodes.transfer import create_transfer_node_with_escalation
+            return {"success": False, "error": result.error}, await create_transfer_node_with_escalation(flow_manager)
 
     except Exception as e:
         logger.error(f"❌ Exam by sport error: {e}")
-        from flows.nodes.transfer import create_transfer_node
-        return {"success": False, "error": str(e)}, create_transfer_node()
+        from flows.nodes.transfer import create_transfer_node_with_escalation
+        return {"success": False, "error": str(e)}, await create_transfer_node_with_escalation(flow_manager)
 
 
 # ============================================================================
@@ -381,13 +380,13 @@ async def global_clinic_info(
             return _add_booking_reminder(response, flow_manager), None
         else:
             logger.error(f"❌ Clinic info failed: {result.error}")
-            from flows.nodes.transfer import create_transfer_node
-            return {"success": False, "error": result.error}, create_transfer_node()
+            from flows.nodes.transfer import create_transfer_node_with_escalation
+            return {"success": False, "error": result.error}, await create_transfer_node_with_escalation(flow_manager)
 
     except Exception as e:
         logger.error(f"❌ Clinic info error: {e}")
-        from flows.nodes.transfer import create_transfer_node
-        return {"success": False, "error": str(e)}, create_transfer_node()
+        from flows.nodes.transfer import create_transfer_node_with_escalation
+        return {"success": False, "error": str(e)}, await create_transfer_node_with_escalation(flow_manager)
 
 
 # ============================================================================

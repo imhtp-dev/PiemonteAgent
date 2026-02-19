@@ -514,12 +514,12 @@ async def perform_booking_creation_and_transition(args: FlowArgs, flow_manager: 
         # Handle API failure after all retries
         if booking_error:
             logger.error(f"❌ Booking creation failed after 2 retries: {booking_error}")
-            from flows.nodes.transfer import create_transfer_node
+            from flows.nodes.transfer import create_transfer_node_with_escalation
             return {
                 "success": False,
                 "error": str(booking_error),
                 "message": "Mi dispiace, c'è un problema tecnico con la prenotazione finale. Ti trasferisco a un operatore."
-            }, create_transfer_node()
+            }, await create_transfer_node_with_escalation(flow_manager)
 
         if booking_response and booking_response.get("success", False):
             # Store booking information

@@ -3,20 +3,15 @@ Transfer Node
 Handles transfer to human operator with escalation API call
 """
 
+from loguru import logger
 from pipecat_flows import NodeConfig
 from config.settings import settings
 
 
 def create_transfer_node() -> NodeConfig:
     """
-    Create transfer node that handles escalation to human operator
-
-    Flow:
-    1. request_transfer handler calls escalation API (in global_handlers.py)
-    2. Handler returns this transfer node
-    3. Agent says transfer message (Italian)
-    4. Post-action: Ends conversation
-    5. WebSocket closes automatically (handled by bridge)
+    Create transfer node (NodeConfig only, no escalation).
+    Use create_transfer_node_with_escalation() instead for most cases.
     """
 
     return NodeConfig(
@@ -39,3 +34,16 @@ def create_transfer_node() -> NodeConfig:
             }
         ]
     )
+
+
+async def create_transfer_node_with_escalation(flow_manager) -> NodeConfig:
+    """
+    Call Talkdesk escalation API then return the transfer node.
+    This ensures every transfer actually triggers the real handoff.
+    """
+    try:
+        from flows.handlers.global_handlers import _handle_transfer_escalation
+        await _handle_transfer_escalation(flow_manager)
+    except Exception as e:
+        logger.error(f"❌ Escalation failed during transfer node creation: {e}")
+    return create_transfer_node()
