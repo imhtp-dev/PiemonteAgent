@@ -2,13 +2,14 @@
 Escalation Service for transferring calls to human operators
 Calls the bridge escalation API which handles WebSocket closure and Talkdesk transfer
 """
+import os
 import aiohttp
 from loguru import logger
 from typing import Optional
 from utils.tracing import trace_api_call, add_span_attributes
 
 # Bridge escalation endpoint
-ESCALATION_API_URL = "https://bridgelombardia-bjezhhgmctauawe3.francecentral-01.azurewebsites.net/escalation"
+ESCALATION_API_URL = os.getenv("BRIDGE_ESCALATION_URL", "https://bridgepiemonte-efhqhzdjdyb6a0g6.francecentral-01.azurewebsites.net/escalation")
 
 
 @trace_api_call("api.escalation_transfer")
