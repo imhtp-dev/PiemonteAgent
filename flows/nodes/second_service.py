@@ -5,7 +5,7 @@ these nodes handle searching and booking the second service.
 """
 
 from typing import List
-from pipecat_flows import NodeConfig, FlowsFunctionSchema
+from pipecat_flows import NodeConfig, FlowsFunctionSchema, ContextStrategyConfig, ContextStrategy
 
 from models.requests import HealthService
 from config.settings import settings
@@ -17,6 +17,7 @@ def create_second_service_search_node(service_text: str, tts_message: str) -> No
 
     return NodeConfig(
         name="second_service_search",
+        context_strategy=ContextStrategyConfig(strategy=ContextStrategy.RESET),
         pre_actions=[
             {
                 "type": "tts_say",

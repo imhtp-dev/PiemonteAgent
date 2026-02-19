@@ -206,12 +206,25 @@ async def finalize_services_and_search_centers(args: FlowArgs, flow_manager: Flo
         
         flow_manager.state["selected_services"] = selected_services
 
-        # Check if pending additional service was matched during orange box navigation
-        flow_path = args.get("flow_path", "")
-        if "pending_matched" in flow_path:
-            flow_manager.state["pending_additional_resolved"] = True
-            flow_manager.state.pop("pending_additional_request", None)
-            logger.info("✅ Pending additional service included via orange box flow")
+        # Check if pending additional service was satisfied during orange box navigation
+        pending_req = flow_manager.state.get("pending_additional_request", "")
+        if pending_req:
+            # Check 1: LLM explicitly flagged pending_matched=true
+            matched = args.get("pending_matched", False)
+
+            # Check 2: Programmatic fallback — check if any selected service name matches
+            if not matched:
+                pending_lower = pending_req.lower().strip()
+                for svc in selected_services:
+                    if pending_lower in svc.name.lower() or svc.name.lower().strip() in pending_lower:
+                        matched = True
+                        logger.info(f"✅ Programmatic match: '{svc.name}' matches pending '{pending_req}'")
+                        break
+
+            if matched:
+                flow_manager.state["pending_additional_resolved"] = True
+                flow_manager.state.pop("pending_additional_request", None)
+                logger.info("✅ Pending additional service resolved via orange box flow")
 
         logger.success(f"🎯 Final service selection: {[s.name for s in selected_services]}")
         logger.success(f"📊 Service count: {len(selected_services)}")

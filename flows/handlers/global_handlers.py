@@ -626,7 +626,10 @@ async def global_start_booking(
             "success": True,
             "service_request": service_request,
             "message": "Starting booking process"
-        }, create_greeting_node(initial_booking_request=service_request if service_request else None)
+        }, create_greeting_node(
+            initial_booking_request=service_request if service_request else None,
+            additional_service_request=additional if additional else None
+        )
 
     except Exception as e:
         logger.error(f"❌ Start booking error: {e}")

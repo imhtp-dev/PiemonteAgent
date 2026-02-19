@@ -63,138 +63,88 @@ def create_orange_box_node() -> NodeConfig:
 def create_flow_navigation_node(generated_flow: dict, service_name: str, pending_additional_request: str = "") -> NodeConfig:
     """Create LLM-driven flow navigation node"""
 
+    # Build pending service section with concrete example if applicable
     pending_section = ""
     if pending_additional_request:
         pending_section = f"""
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔔 PENDING ADDITIONAL SERVICE REQUEST
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-The patient also wants to book: "{pending_additional_request}"
-While navigating, if you see a service in any list_health_services whose name closely matches
-"{pending_additional_request}", inform the user:
-"Ho notato che [service_name] è disponibile come servizio aggiuntivo. Vuoi includerlo?"
-If YES → include it in additional_services array AND append "pending_matched" to flow_path
-If NO → proceed normally, it will be booked separately later
+## PENDING ADDITIONAL SERVICE
 
+The patient ALSO requested: "{pending_additional_request}"
+
+RULE: While navigating, at EVERY level that has "list_health_services", scan the list for a service
+whose name contains "{pending_additional_request}" (case-insensitive partial match).
+
+If you find a match:
+1. Tell the patient: "Ho notato che [matched service name] è disponibile come servizio aggiuntivo. Vuoi includerlo?"
+2. If patient says YES → add it to your tracked services AND set pending_matched=true when calling finalize_services
+3. If patient says NO → continue normally, set pending_matched=false
+
+If no match is found in any list → set pending_matched=false (it will be booked separately later).
+
+EXAMPLE: If pending request is "visita ortopedica" and you see "Visita Ortopedica (Prima Visita)" in a
+list_health_services array → that IS a match. Inform the patient and ask if they want to include it.
 """
 
     return NodeConfig(
         name="flow_navigation",
+        context_strategy=ContextStrategyConfig(strategy=ContextStrategy.RESET),
         role_messages=[{
             "role": "system",
-            "content": f"""You are navigating a decision flow for the health service: {service_name}
-
-🔥 MANDATORY: FOLLOW THIS EXACT JSON FLOW STRUCTURE STEP-BY-STEP 🔥
+            "content": f"""## ROLE
+You are Ualà, a healthcare booking assistant navigating a decision flow for: {service_name}
+Speak naturally in a warm, conversational tone. Never mention UUIDs, sectors, or technical terms.
+{settings.language_config}
+{pending_section}
+## DECISION FLOW (JSON)
 
 {json.dumps(generated_flow, indent=2)}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 STEP-BY-STEP NAVIGATION PROTOCOL (MUST FOLLOW STRICTLY)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## NAVIGATION INSTRUCTIONS
 
-**STEP 1: START AT ROOT LEVEL**
-- Begin by presenting the "message" field from the ROOT level of the JSON
-- This is your first question to the user
-- DO NOT skip this step - always start here
+Follow the JSON tree step-by-step. Never skip levels, never jump ahead.
 
-**STEP 2: WAIT FOR USER RESPONSE**
-- After presenting the message, WAIT for user to answer
-- User will answer either YES or NO (or select from service options)
-- DO NOT proceed to next step until user responds
+Step 1 — Present the root "message" to the patient. Wait for their response.
+Step 2 — Based on their answer:
+  - YES → enter the "yes" branch
+  - NO → enter the "no" branch
+  - Selected a service from list → track it (extract uuid, name, code, sector from parallel arrays at same index), then enter "yes" branch
+Step 3 — At the new position, check what exists:
+  - "message" field → present it, go back to Step 1
+  - "list_health_services" → present options naturally (no numbered lists), wait for selection
+  - "action": "save_cart" → call finalize_services with ALL tracked services
+  - No "yes"/"no" branches → terminal node, call finalize_services
+Step 4 — Repeat until you reach an end condition.
 
-**STEP 3: NAVIGATE TO CORRECT BRANCH**
-- If user says YES → navigate into the "yes" branch object
-- If user says NO → navigate into the "no" branch object
-- If user selects a service from list_health_services → track that service (uuid, code, sector) AND continue with YES branch
+## SERVICE TRACKING
 
-**STEP 4: CHECK CURRENT POSITION IN TREE**
-At your new position in the tree, check what exists:
-- Does this level have a "message" field? → Present it and wait for response (go back to STEP 2)
-- Does this level have "list_health_services"? → Present the service options
-- Does this level have "action": "save_cart"? → Call finalize_services function (FINAL STEP)
-- Does this level ONLY have text without yes/no branches? → This is an END point, call finalize_services
+Maintain a list of ALL services the patient selects throughout navigation:
+- The main service (from root level)
+- Any optionals, prescriptions, or specialist visits selected along the way
 
-**STEP 5: TRACK ALL SELECTED SERVICES**
-Throughout navigation, maintain a list of ALL services user selected:
-- Main service (from root "list_health_services" or "main_exam")
-- Additional services from any "list_health_services" arrays
-- Specialist visits if user answered YES to specialist questions
+For each selected service, extract from the PARALLEL ARRAYS at the SAME index:
+- uuid → from list_health_servicesUUID[index]
+- name → from list_health_services[index]
+- code → from health_service_code[index]
+- sector → from sector[index]
 
-For EACH service, extract from parallel arrays at the SAME index:
-- uuid from list_health_servicesUUID[index]
-- name from list_health_services[index]
-- code from health_service_code[index]
-- sector from sector[index]
+## RULES
 
-**STEP 6: RECOGNIZE END CONDITIONS**
-You've reached the end when you encounter ANY of these:
-- "action": "save_cart" → Call finalize_services immediately
-- A message with NO "yes" or "no" branches below it → Call finalize_services
-- A terminal node (like "It is not possible to proceed...") → Call finalize_services with empty additional_services
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 EXAMPLE NAVIGATION FLOW
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Using your JSON structure:
-
-1️⃣ START: Present root "message"
-   → "This exam requires a prescription from a general practitioner or specialist. Do you have a medical prescription?"
-
-2️⃣ USER SAYS: "Yes"
-   → Navigate to json["yes"] branch
-
-3️⃣ PRESENT: json["yes"]["message"]
-   → "Does your prescription include any of the following additional services you want to book?"
-   → Show services: "RX del Piede Destro, RX del Piede Destro Sotto carico, ..." (NO NUMBERS!)
-
-4️⃣ USER SAYS: "Yes, I want RX del Piede Destro"
-   → Track service: uuid="ea65a7bf-58e4-4ac0-9041-61a5088cefb6", code="RRAD0049", sector="optionals"
-   → Navigate to json["yes"]["yes"] branch
-
-5️⃣ PRESENT: json["yes"]["yes"]["message"]
-   → "Performing a diagnostic exam does not include the visit. Do you want to book a specialist visit to review the booked exams?"
-   → Show service: "Visita Ortopedica (Prima Visita)"
-
-6️⃣ USER SAYS: "Yes"
-   → Track specialist service: uuid="1cc793b7-4a8b-4c54-ac09-3c7ca7e5a168", code="PORT0001", sector="opinions"
-   → Navigate to json["yes"]["yes"]["yes"] branch
-
-7️⃣ FOUND: "action": "save_cart"
-   → END REACHED! Call finalize_services with ALL tracked services
-
-{pending_section}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🚨 CRITICAL RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. **NEVER SKIP LEVELS**: You must present EVERY "message" field you encounter while navigating the tree
-2. **NEVER MENTION UUIDs**: Users see only service names, UUIDs are internal tracking only
-3. **NEVER USE NUMBERS**: Don't say "1. Service A, 2. Service B" - just say "Service A, Service B"
-4. **ALWAYS EXTRACT PARALLEL ARRAYS**: When user picks a service, get uuid, code, AND sector at same index
-5. **TRACK EVERYTHING**: Keep a mental list of ALL services selected throughout the conversation (including optional services, specialist visits, prescriptions, etc.)
-6. **FOLLOW YES/NO STRICTLY**: If user says YES, go to "yes" branch. If NO, go to "no" branch. Never mix them up.
-7. **CALL finalize_services ONLY AT THE END**: When you reach "action": "save_cart" or a terminal node, include ALL tracked services in additional_services array
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎭 PRESENTATION STYLE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-- Present messages EXACTLY as written in the "message" fields
-- Speak naturally and conversationally like a human healthcare assistant
-- When listing services, use natural language: "We have X, Y, and Z available"
-- Never sound robotic or mention technical terms like "UUID", "sector", "branch"
-
-Be conversational but follow the flow structure carefully. Always speak like a human, not a robot. {settings.language_config}"""
+- Present each "message" field EXACTLY as written in the JSON
+- Never use numbered lists (no "1.", "2.", "3.") — list services with commas or natural speech
+- Never mention UUIDs, codes, or sectors to the patient
+- Follow YES/NO branches strictly — never mix them
+- Call finalize_services ONLY when you reach "action": "save_cart" or a terminal node
+- Include ALL tracked services in the additional_services array"""
         }],
         task_messages=[{
             "role": "system",
-            "content": f"Start the decision flow for {service_name}. Begin with the main message from the generated flow."
+            "content": f"Begin the decision flow for {service_name}. Present the root message now."
         }],
         functions=[
             FlowsFunctionSchema(
                 name="finalize_services",
                 handler=finalize_services_and_search_centers,
-                description="Finalize ALL service selections and proceed to center search",
+                description="Finalize ALL service selections and proceed to center search. Call ONLY at end of flow.",
                 properties={
                     "additional_services": {
                         "type": "array",
@@ -208,11 +158,15 @@ Be conversational but follow the flow structure carefully. Always speak like a h
                             },
                             "required": ["uuid", "name", "code", "sector"]
                         },
-                        "description": "ALL services selected during flow navigation. Extract uuid, name, code, and sector from the parallel arrays at the SAME index in the flow JSON. Include ALL services user selected: optionals, prescriptions, preliminary visits, specialist visits (opinions sector), etc."
+                        "description": "ALL services selected during flow navigation including optionals, prescriptions, specialist visits."
                     },
                     "flow_path": {
                         "type": "string",
-                        "description": "The path through the decision tree (e.g., 'yes->yes', 'yes->no')"
+                        "description": "Navigation path taken (e.g., 'yes->no->yes')"
+                    },
+                    "pending_matched": {
+                        "type": "boolean",
+                        "description": "true if the patient's pending additional service request was found in the flow and included in additional_services. false otherwise."
                     }
                 },
                 required=[]
@@ -466,6 +420,7 @@ def create_collect_datetime_node(service_name: str = None, is_multi_service: boo
 
     return NodeConfig(
         name=node_name,
+        context_strategy=ContextStrategyConfig(strategy=ContextStrategy.RESET),
         pre_actions=[
             {
                 "type": "tts_say",
@@ -938,17 +893,16 @@ Ask the user which time works best for them."""
         logger.info(f"🚀 DATE SELECTION: Sending date options to LLM")
     
     # NOTE: task_content and slot_context are already set by the smart filtering logic above
-    
-    return NodeConfig(
-        name="slot_selection",
-        role_messages=[{
-            "role": "system",
-            "content": f"""Help the patient select from available appointment slots for {service.name}.
 
-🎯 SLOT PRESENTATION: {slot_context.get('slot_count', 'Unknown')} slots available.
+    # Build role content based on mode: date selection vs time selection
+    if slot_context.get('available_times'):
+        # TIME SELECTION MODE — specific slots for a date
+        role_content = f"""Help the patient select from available appointment slots for {service.name}.
+
+🎯 SLOT PRESENTATION: {slot_context['slot_count']} slots available.
 
 📢 AVAILABLE TIMES (already in Italian - speak these EXACTLY as written):
-{slot_context.get('available_times', [])}
+{slot_context['available_times']}
 
 🗣️ SPEECH RULES - CRITICAL:
 - Times are PRE-CONVERTED to Italian words - speak them EXACTLY as shown
@@ -956,7 +910,7 @@ Ask the user which time works best for them."""
 - Example: If list shows "otto e trenta", say "otto e trenta" (NOT "8:30, otto e trenta")
 
 ⚡ UUID MAPPING for function calls (Italian time → UUID):
-{slot_context.get('italian_to_uuid_map', {})}
+{slot_context['italian_to_uuid_map']}
 
 🚨 WHEN USER SELECTS A TIME:
 1. User says Italian time (e.g., "otto e trenta" or "le otto e mezza")
@@ -967,6 +921,31 @@ Ask the user which time works best for them."""
 - Be conversational and human
 
 {settings.language_config}"""
+    else:
+        # DATE SELECTION MODE — patient needs to pick a date first
+        role_content = f"""Help the patient choose an appointment date for {service.name}.
+
+You are in DATE SELECTION mode. The patient needs to pick a date first.
+Once they choose a date, call update_date_preference with that date in YYYY-MM-DD format.
+
+AVAILABLE DATES: {slot_context.get('available_dates', [])}
+TOTAL SLOTS across all dates: {slot_context.get('total_slots', 0)}
+
+RULES:
+- Present the dates naturally from the task message below
+- When patient picks a date, IMMEDIATELY call update_date_preference
+- Do NOT say there are no available times — times will load after date selection
+- Never mention prices, UUIDs, or technical details
+- Be conversational and human
+
+{settings.language_config}"""
+
+    return NodeConfig(
+        name="slot_selection",
+        context_strategy=ContextStrategyConfig(strategy=ContextStrategy.RESET),
+        role_messages=[{
+            "role": "system",
+            "content": role_content
         }],
         task_messages=[{
             "role": "system",
@@ -1392,11 +1371,11 @@ def create_automatic_slot_search_node(service_name: str, tts_message: str) -> No
         ],
         role_messages=[{
             "role": "system",
-            "content": f"You are processing automatic slot search for {service_name}. The date and time have been automatically calculated based on the first service. Immediately call perform_slot_search to execute the search. {settings.language_config}"
+            "content": f"You are a slot search processor for {service_name}. Your ONLY job is to call perform_slot_search. Do NOT speak to the user — the pre_actions TTS has already informed them. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",
-            "content": f"Searching for available slots for {service_name} on the same day as your first service, starting 1 hour after your first appointment ends. Please wait."
+            "content": "IMMEDIATELY call perform_slot_search. Do NOT generate any text response. Just call the function."
         }],
         functions=[
             FlowsFunctionSchema(

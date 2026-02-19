@@ -2,8 +2,11 @@ import requests
 import os
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
+from dotenv import load_dotenv
 from loguru import logger
 from utils.tracing import trace_sync_call, add_span_attributes
+
+load_dotenv(override=True)
 #from auth import get_token
 
 
@@ -187,6 +190,6 @@ def delete_slot(slot_uuid):
     return response
 
 
-#print(list_slot("6cff89d8-1f40-4eb8-bed7-f36e94a3355c","2025-10-24",['9a93d65f-396a-45e4-9284-94481bdd2b51', '7de81336-c7ce-4dad-a04b-ad4b2193113d'], start_time="2025-11-17 07:00:00+00", end_time="2025-11-17 17:00:00+00"))
+#print(list_slot("b6766932-8b4f-4ce3-a959-b1142e8daf11","2026-03-19",['0f1b2c75-e84b-432a-8f7e-d172dc8eae7a'], start_time=None, end_time=None))
 #print(create_slot('2025-11-20 15:40:00','2025-11-20 15:55:00',"3a4c9547-bd61-4557-a1b5-f681b3d9da25"))
 #print(create_slot('2025-10-27 11:25:00','2025-10-27 11:30:00',"d1bbc9cd-e7e8-4e1e-8075-b637824504a6"))

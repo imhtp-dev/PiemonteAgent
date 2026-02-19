@@ -412,8 +412,6 @@ async def perform_booking_creation_and_transition(args: FlowArgs, flow_manager: 
         # Extract parameters
         selected_services = params["selected_services"]
         booked_slots = params["booked_slots"]
-        service_groups = params.get("service_groups", [])
-        booking_scenario = params.get("booking_scenario", "legacy")
         patient_name = params["patient_name"]
         patient_surname = params["patient_surname"]
         patient_phone = params["patient_phone"]
@@ -469,36 +467,21 @@ async def perform_booking_creation_and_transition(args: FlowArgs, flow_manager: 
             "marketing_authorization": marketing_auth
         }
 
-        # Add health services with their slot UUIDs (group-aware mapping)
-        logger.info(f"🔍 BOOKING API MAPPING: Scenario={booking_scenario}, Groups={len(service_groups)}, Slots={len(booked_slots)}")
+        # Add health services with their slot UUIDs
+        # Use booked_slots directly — each slot already has slot_uuid + health_services[].uuid
+        # This is reliable for multi-service bookings (second service loop clears service_groups)
+        logger.info(f"🔍 BOOKING API MAPPING: Slots={len(booked_slots)}")
 
-        if booking_scenario in ["bundle", "separate", "combined"] and service_groups:
-            # Use service_groups structure for proper slot mapping
-            for group_index, service_group in enumerate(service_groups):
-                if group_index < len(booked_slots):
-                    slot_uuid = booked_slots[group_index]["slot_uuid"]
-                    group_services = service_group["services"]
-                    is_bundled = service_group.get("is_group", False)
-
-                    logger.info(f"   Group {group_index}: {len(group_services)} services, bundled={is_bundled}, slot={slot_uuid}")
-
-                    # Add ALL services in this group with the SAME slot UUID
-                    for service in group_services:
-                        booking_data["health_services"].append({
-                            "uuid": service.uuid,
-                            "slot": slot_uuid
-                        })
-                        logger.info(f"      → Mapped {service.name} (UUID: {service.uuid}) to slot {slot_uuid}")
-        else:
-            # Legacy mode: 1:1 mapping
-            logger.info(f"   Using legacy 1:1 mapping")
-            for i, service in enumerate(selected_services):
-                if i < len(booked_slots):
-                    booking_data["health_services"].append({
-                        "uuid": service.uuid,
-                        "slot": booked_slots[i]["slot_uuid"]
-                    })
-                    logger.info(f"      → Mapped {service.name} (UUID: {service.uuid}) to slot {booked_slots[i]['slot_uuid']}")
+        for slot in booked_slots:
+            slot_uuid = slot["slot_uuid"]
+            slot_services = slot.get("health_services", [])
+            logger.info(f"   Slot {slot_uuid}: {len(slot_services)} service(s) ({slot.get('service_name', 'unknown')})")
+            for hs in slot_services:
+                booking_data["health_services"].append({
+                    "uuid": hs["uuid"],
+                    "slot": slot_uuid
+                })
+                logger.info(f"      → Mapped {hs.get('name', 'unknown')} (UUID: {hs['uuid']}) to slot {slot_uuid}")
 
         logger.info(f"📝 Creating final booking with data: {booking_data}")
 
