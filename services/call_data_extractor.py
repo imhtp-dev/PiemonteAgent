@@ -462,14 +462,21 @@ TRANSCRIPT:
         service = "5"  # Default: OTHER
         functions_called = flow_state.get("functions_called", [])
         for func in functions_called:
-            if "clinic" in func.lower() or "blood" in func.lower():
-                service = "1"
+            func_lower = func.lower()
+            if "clinic" in func_lower or "blood" in func_lower or "laboratorio" in func_lower or "prelievo" in func_lower:
+                service = "1"  # Lab/blood draws
                 break
-            elif "price" in func.lower() or "visit" in func.lower():
-                service = "4"  # Sports medical visits
+            elif "price" in func_lower or "visit" in func_lower or "booking" in func_lower:
+                service = "2"  # Poli (visits, ultrasounds, outpatient)
                 break
-            elif "exam" in func.lower():
-                service = "2"
+            elif "exam" in func_lower:
+                service = "2"  # Poli
+                break
+            elif any(kw in func_lower for kw in ["rmn", "rx", "tac", "moc", "mammograf", "radiolog", "imaging"]):
+                service = "3"  # Diagnostica per immagini
+                break
+            elif "sport" in func_lower:
+                service = "4"  # Medicina dello sport
                 break
 
         summary = f"Chiamata {esito_chiamata.lower()}. Paziente ha richiesto: {patient_intent or 'informazioni'}."
@@ -605,10 +612,22 @@ TRANSCRIPT:
                 "patient_intent": analysis.get("patient_intent", "Richiesta assistenza operatore")
             }
 
+            # Determine sector from flow state
+            sector = "info"  # Default
+            if flow_state.get("transfer_type") == "previous_appointment_cancellation":
+                sector = "booking"
+            elif flow_state.get("selected_services") or flow_state.get("booking_in_progress"):
+                sector = "booking"
+            elif any(phrase in flow_state.get("transfer_reason", "").lower()
+                     for phrase in ["medicina sportiva", "visita sportiva", "certificato sportivo"]):
+                sector = "booking"
+            escalation_data["sector"] = sector
+
             logger.success(f"✅ Transfer analysis completed:")
             logger.info(f"   Duration: {escalation_data['duration_seconds']}s")
             logger.info(f"   Sentiment: {escalation_data['sentiment']}")
             logger.info(f"   Service: {escalation_data['service']}")
+            logger.info(f"   Sector: {escalation_data['sector']}")
             logger.info(f"   Esito: {escalation_data['esito_chiamata']}")
             logger.info(f"   Motivazione: {escalation_data['motivazione']}")
             logger.info(f"   Summary: {escalation_data['summary'][:100]}...")

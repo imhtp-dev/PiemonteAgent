@@ -725,6 +725,68 @@ async def global_cancel_and_restart(
 
 
 # ============================================================================
+# 10. CANCEL PREVIOUS APPOINTMENT (Global) - TRANSFER TO DISDETTA QUEUE
+# ============================================================================
+
+async def global_cancel_previous_appointment(
+    args: FlowArgs,
+    flow_manager: FlowManager
+) -> Tuple[Dict[str, Any], NodeConfig]:
+    """
+    Transfer to Disdetta queue (1|1|5) for cancelling/rescheduling previous appointments.
+    Unlike cancel_and_restart which resets the current flow, this transfers to a human operator.
+    """
+    try:
+        reason = args.get("reason", "Cancellazione/spostamento appuntamento precedente")
+        logger.info(f"📞 [GLOBAL] Cancel previous appointment: {reason}")
+
+        flow_manager.state["transfer_requested"] = True
+        flow_manager.state["transfer_type"] = "previous_appointment_cancellation"
+        flow_manager.state["transfer_reason"] = reason
+        flow_manager.state["transfer_timestamp"] = str(asyncio.get_event_loop().time())
+
+        await _handle_transfer_escalation(flow_manager)
+
+        from flows.nodes.transfer import create_transfer_node
+        return {
+            "success": True,
+            "reason": reason,
+            "transfer_type": "previous_appointment_cancellation"
+        }, create_transfer_node()
+
+    except Exception as e:
+        logger.error(f"❌ Cancel previous appointment error: {e}")
+        from flows.nodes.transfer import create_transfer_node
+        await _handle_transfer_escalation(flow_manager)
+        return {
+            "success": True,
+            "reason": "error in cancel previous appointment",
+            "error": str(e)
+        }, create_transfer_node()
+
+
+# ============================================================================
+# HELPER: Sector Determination
+# ============================================================================
+
+def _determine_escalation_sector(flow_manager: FlowManager) -> str:
+    """Determine escalation sector: 'booking' (1|1|x) or 'info' (2|2|x)."""
+    state = flow_manager.state
+    # Disdetta/reschedule of previous appointment
+    if state.get("transfer_type") == "previous_appointment_cancellation":
+        return "booking"
+    # Sports medicine transfer (blocked from booking)
+    transfer_reason = state.get("transfer_reason", "").lower()
+    if any(phrase in transfer_reason for phrase in ["medicina sportiva", "visita sportiva", "certificato sportivo", "idoneità sportiva"]):
+        return "booking"
+    # Active booking flow (has selected services)
+    if state.get("selected_services") or state.get("booking_in_progress"):
+        return "booking"
+    # Default: info
+    return "info"
+
+
+# ============================================================================
 # HELPER: Transfer Escalation
 # ============================================================================
 
@@ -749,6 +811,19 @@ async def _handle_transfer_escalation(flow_manager: FlowManager) -> None:
         logger.success("✅ Transfer analysis complete")
         logger.info(f"   Summary: {analysis['summary'][:100]}...")
 
+        # Determine sector for Talkdesk routing
+        sector = _determine_escalation_sector(flow_manager)
+
+        # Force service code for specific transfer types
+        service_code = analysis["service"]
+        transfer_reason = flow_manager.state.get("transfer_reason", "").lower()
+        if any(phrase in transfer_reason for phrase in ["medicina sportiva", "visita sportiva", "certificato sportivo", "idoneità sportiva"]):
+            service_code = "4"  # Medicina dello sport
+        if flow_manager.state.get("transfer_type") == "previous_appointment_cancellation":
+            service_code = "5"  # Disdetta
+
+        logger.info(f"   Sector: {sector}, Service: {service_code}")
+
         # Get stream_sid for Talkdesk
         stream_sid = flow_manager.state.get("stream_sid", "")
 
@@ -760,9 +835,10 @@ async def _handle_transfer_escalation(flow_manager: FlowManager) -> None:
             sentiment=analysis["sentiment"],
             action="transfer",
             duration=str(analysis["duration_seconds"]),
-            service=analysis["service"],
+            service=service_code,
             call_id=session_id,
-            stream_sid=stream_sid
+            stream_sid=stream_sid,
+            sector=sector
         )
 
         # Store for later

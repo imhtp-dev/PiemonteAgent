@@ -138,11 +138,20 @@ async def report_to_talkdesk(flow_manager, call_extractor):
         else:
             logger.info("✅ Using pre-computed analysis from transfer preparation")
 
+        # Determine sector and service code
+        service_code = str(analysis.get("service", "5"))
+        sector = analysis.get("sector", "info")
+        # Also check flow state for booking context
+        if not sector or sector == "info":
+            if flow_manager.state.get("selected_services") or flow_manager.state.get("booking_in_progress"):
+                sector = "booking"
+        service_prefix = "1|1" if sector == "booking" else "2|2"
+
         # Build Talkdesk payload
         call_data = {
             "interaction_id": interaction_id,
             "sentiment": analysis.get("sentiment", "neutral"),
-            "service": f"2|2|5",
+            "service": f"{service_prefix}|{service_code}",
             "summary": analysis.get("summary", "")[:250],  # Max 250 chars
             "duration_seconds": int(call_extractor._calculate_duration() or 0)
         }

@@ -1,6 +1,6 @@
 """
 Global Function Schemas
-10 global functions available at every node in the conversation.
+11 global functions available at every node in the conversation.
 """
 
 from pipecat_flows import FlowsFunctionSchema
@@ -15,6 +15,7 @@ from flows.handlers.global_handlers import (
     global_request_transfer,
     global_check_service_price,
     global_start_booking,
+    global_cancel_previous_appointment,
     global_cancel_and_restart,
 )
 
@@ -169,10 +170,24 @@ GLOBAL_FUNCTIONS = [
         handler=global_start_booking,
     ),
 
-    # 10. Cancel Booking and Restart (TRANSITIONS)
+    # 10. Cancel/Reschedule Previous Appointment (TRANSITIONS → TRANSFER)
+    FlowsFunctionSchema(
+        name="cancel_previous_appointment",
+        description="Transfer to operator for cancelling or rescheduling a PREVIOUSLY booked appointment. Use when patient says: 'voglio disdire un appuntamento', 'spostare una visita prenotata', 'annullare un appuntamento che ho già', 'disdetta'. Do NOT use for cancelling the current booking flow - use cancel_and_restart for that.",
+        properties={
+            "reason": {
+                "type": "string",
+                "description": "Reason for cancellation/reschedule (e.g., 'disdetta appuntamento', 'spostare visita')"
+            }
+        },
+        required=["reason"],
+        handler=global_cancel_previous_appointment,
+    ),
+
+    # 11. Cancel Booking and Restart (TRANSITIONS)
     FlowsFunctionSchema(
         name="cancel_and_restart",
-        description="Cancel current booking and go back to main menu. Use when patient says: 'voglio cambiare prenotazione', 'annulla la prenotazione', 'voglio prenotare qualcos'altro', 'ricominciamo da capo'. Deletes any reserved slots and returns to router.",
+        description="Cancel current booking and go back to main menu. Use when patient says: 'voglio cambiare prenotazione', 'annulla la prenotazione corrente', 'voglio prenotare qualcos'altro', 'ricominciamo da capo'. Deletes any reserved slots and returns to router. ONLY for the current booking in progress, NOT for previously booked appointments.",
         properties={},
         required=[],
         handler=global_cancel_and_restart,
