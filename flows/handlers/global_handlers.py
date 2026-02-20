@@ -393,10 +393,11 @@ async def global_clinic_info(
 # 7. REQUEST TRANSFER (Global) - CAPABILITY LIMITS vs GENERIC REQUESTS
 # ============================================================================
 
-# Capability limitations - agent physically cannot help with these services
-# Transfer IMMEDIATELY when these are detected in the reason
-CAPABILITY_LIMIT_PHRASES = [
+# Services that cannot be booked/priced via this agent — used as safety net
+# in start_booking and check_service_price handlers
+UNBOOKABLE_SERVICE_KEYWORDS = [
     "medicina sportiva",
+    "medicina dello sport",
     "visita sportiva",
     "certificato sportivo",
     "idoneità sportiva",
@@ -409,10 +410,10 @@ CAPABILITY_LIMIT_PHRASES = [
 ]
 
 
-def _is_capability_limitation(reason: str) -> bool:
-    """Check if transfer reason indicates a capability limitation (agent cannot help)."""
-    reason_lower = reason.lower()
-    return any(phrase in reason_lower for phrase in CAPABILITY_LIMIT_PHRASES)
+def _is_unbookable_service(service_name: str) -> bool:
+    """Check if a service name refers to something we can't book/price."""
+    name_lower = service_name.lower()
+    return any(kw in name_lower for kw in UNBOOKABLE_SERVICE_KEYWORDS)
 
 
 async def global_request_transfer(
@@ -421,64 +422,32 @@ async def global_request_transfer(
 ) -> Tuple[Dict[str, Any], Optional[NodeConfig]]:
     """
     Handle user request to transfer to human operator.
-
-    Two modes:
-    1. CAPABILITY LIMITATION (sports medicine, laboratorio, etc.)
-       → Agent CANNOT help → Transfer IMMEDIATELY
-
-    2. GENERIC REQUEST (user just says "transfer me")
-       → Ask what they need → Only transfer if agent then FAILS
-
-    This reduces unnecessary transfers while ensuring capability limits are handled.
+    LLM decided to transfer → just transfer. Always.
     """
     try:
-        from utils.failure_tracker import FailureTracker
-
         reason = args.get("reason", "user request").strip()
 
         logger.info(f"📞 [GLOBAL] Transfer requested: {reason}")
 
         # Store transfer info
+        flow_manager.state["transfer_requested"] = True
         flow_manager.state["transfer_reason"] = reason
+        flow_manager.state["transfer_type"] = "capability_limitation"
         flow_manager.state["transfer_timestamp"] = str(asyncio.get_event_loop().time())
 
-        # Check if this is a CAPABILITY LIMITATION (agent cannot help)
-        if _is_capability_limitation(reason):
-            logger.info(f"🚫 Capability limitation detected: {reason[:50]}... → Transferring immediately")
+        # Execute escalation API call
+        await _handle_transfer_escalation(flow_manager)
 
-            # Mark transfer in state for analytics
-            flow_manager.state["transfer_requested"] = True
-            flow_manager.state["transfer_type"] = "capability_limitation"
-
-            # Execute escalation API call
-            await _handle_transfer_escalation(flow_manager)
-
-            # Transition to transfer node
-            from flows.nodes.transfer import create_transfer_node
-            return {
-                "success": True,
-                "reason": reason,
-                "transfer_type": "capability_limitation"
-            }, create_transfer_node()
-
-        # GENERIC REQUEST - Ask what they need first
-        logger.info("📞 Generic transfer request - asking what user needs before transferring")
-
-        # Mark transfer requested in failure tracker
-        # This sets threshold to 1, so next failure = transfer
-        FailureTracker.mark_transfer_requested(flow_manager.state)
-
-        # Return with pending_transfer flag to prevent tracker reset
-        return _add_booking_reminder({
+        # Transition to transfer node
+        from flows.nodes.transfer import create_transfer_node
+        return {
             "success": True,
-            "pending_transfer": True,  # Prevents TrackedFlowManager from resetting failure tracker
             "reason": reason,
-            "message": "Dimmi di cosa hai bisogno. Se non riesco ad aiutarti, ti trasferirò a un operatore umano."
-        }, flow_manager), None  # None = stay at current node, let user explain their request
+            "transfer_type": "capability_limitation"
+        }, create_transfer_node()
 
     except Exception as e:
         logger.error(f"❌ Transfer request error: {e}")
-        # On error, do transfer immediately
         from flows.nodes.transfer import create_transfer_node
         await _handle_transfer_escalation(flow_manager)
         return {
@@ -506,7 +475,7 @@ async def global_check_service_price(
         logger.info(f"💰 [GLOBAL] Check Service Price: {service_request}")
 
         # CHECK: Sports medicine services cannot be priced via this agent
-        if _is_capability_limitation(service_request):
+        if _is_unbookable_service(service_request):
             logger.warning(f"🚫 Sports medicine price check: '{service_request}' → Redirecting to transfer")
 
             flow_manager.state["transfer_reason"] = f"Prezzo medicina sportiva: {service_request}"
@@ -577,7 +546,7 @@ async def global_start_booking(
         logger.info(f"📅 [GLOBAL] Start Booking: {service_request}")
 
         # CHECK: Is this a sports medicine service? (capability limitation)
-        if _is_capability_limitation(service_request):
+        if _is_unbookable_service(service_request):
             logger.warning(f"🚫 Sports medicine booking detected: '{service_request}' → Redirecting to transfer")
 
             # Store transfer info
@@ -780,7 +749,7 @@ def _determine_escalation_sector(flow_manager: FlowManager) -> str:
         return "booking"
     # Sports medicine / lab transfer (check reason keywords)
     transfer_reason = state.get("transfer_reason", "").lower()
-    if any(phrase in transfer_reason for phrase in CAPABILITY_LIMIT_PHRASES):
+    if any(phrase in transfer_reason for phrase in UNBOOKABLE_SERVICE_KEYWORDS):
         return "booking"
     # Active booking flow (has selected services)
     if state.get("selected_services") or state.get("booking_in_progress"):
