@@ -775,9 +775,12 @@ def _determine_escalation_sector(flow_manager: FlowManager) -> str:
     # Disdetta/reschedule of previous appointment
     if state.get("transfer_type") == "previous_appointment_cancellation":
         return "booking"
-    # Sports medicine transfer (blocked from booking)
+    # Capability limitation transfer (sports medicine, lab, etc.)
+    if state.get("transfer_type") == "capability_limitation":
+        return "booking"
+    # Sports medicine / lab transfer (check reason keywords)
     transfer_reason = state.get("transfer_reason", "").lower()
-    if any(phrase in transfer_reason for phrase in ["medicina sportiva", "visita sportiva", "certificato sportivo", "idoneità sportiva"]):
+    if any(phrase in transfer_reason for phrase in CAPABILITY_LIMIT_PHRASES):
         return "booking"
     # Active booking flow (has selected services)
     if state.get("selected_services") or state.get("booking_in_progress"):

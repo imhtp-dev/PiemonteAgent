@@ -616,10 +616,9 @@ TRANSCRIPT:
             sector = "info"  # Default
             if flow_state.get("transfer_type") == "previous_appointment_cancellation":
                 sector = "booking"
-            elif flow_state.get("selected_services") or flow_state.get("booking_in_progress"):
+            elif flow_state.get("transfer_type") == "capability_limitation":
                 sector = "booking"
-            elif any(phrase in flow_state.get("transfer_reason", "").lower()
-                     for phrase in ["medicina sportiva", "visita sportiva", "certificato sportivo"]):
+            elif flow_state.get("selected_services") or flow_state.get("booking_in_progress"):
                 sector = "booking"
             escalation_data["sector"] = sector
 
