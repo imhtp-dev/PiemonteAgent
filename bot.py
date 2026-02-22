@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 from loguru import logger
 
-# Enable Deepgram and WebSocket debugging
+# Enable Deepgram and WebSocket debuggings
 logging.getLogger("deepgram").setLevel(logging.DEBUG)
 logging.getLogger("websockets").setLevel(logging.DEBUG)
 
