@@ -18,14 +18,32 @@ from pipecat_flows.types import ContextStrategy, ContextStrategyConfig
 from config.settings import settings
 
 
-def create_router_node(reset_context: bool = False) -> NodeConfig:
+def create_router_node(reset_context: bool = False, business_status: str = "open") -> NodeConfig:
     """
     Create the initial router node.
     Global functions handle all info, booking, and transfer requests.
 
     Args:
         reset_context: If True, reset LLM context (used after cancel_and_restart).
+        business_status: "open", "close", or "after_hours" — controls transfer availability in prompt.
     """
+
+    # Build business status prompt section
+    if business_status in ("close", "after_hours"):
+        transfer_status_prompt = """
+🚫 **CALL CENTER STATUS: CLOSED**
+- You CANNOT transfer calls to operators — the call center is closed.
+- Do NOT offer or propose transfers. Do NOT say "Vuoi che ti trasferisca a un operatore".
+- If patient asks for transfer: "Mi dispiace, il call center è attualmente chiuso. Non posso trasferirla a un operatore in questo momento."
+- If patient asks for sports medicine / laboratorio: "Mi dispiace, la prenotazione per questo servizio richiede un operatore, ma il call center è attualmente chiuso. La invito a richiamare durante gli orari di apertura."
+- If patient wants to cancel/reschedule a previous appointment: "Mi dispiace, per disdire o spostare un appuntamento serve un operatore, ma il call center è chiuso. La invito a richiamare durante gli orari di apertura."
+- You CAN still: answer info questions, provide pricing, check exams, check clinic hours, and start bookings (poliambulatorio/radiologia).
+"""
+    else:
+        transfer_status_prompt = """
+✅ **CALL CENTER STATUS: OPEN**
+- Transfers to human operators are available.
+"""
 
     node = NodeConfig(
         name="router",
@@ -33,7 +51,7 @@ def create_router_node(reset_context: bool = False) -> NodeConfig:
             "role": "system",
             "content": f"""You are Ualà, a helpful virtual assistant for Cerba Healthcare (Piemonte, Italy).
 You are the initial contact point for incoming calls.
-
+{transfer_status_prompt}
 **Your capabilities (tools available):**
 1. knowledge_base_new - Answer FAQs, preparations, documents, booking process questions
 2. get_competitive_pricing - Agonistic sports visit pricing (needs age, gender, sport, region)
@@ -68,7 +86,7 @@ IMPORTANT: If NO doctor name is mentioned, call start_booking IMMEDIATELY. Never
 🚫 **SPORTS MEDICINE EXCEPTION (CRITICAL):**
 If patient wants to book a SPORTS MEDICINE visit (visita sportiva, medicina dello sport, certificato sportivo, idoneità sportiva, visita agonistica, visita non agonistica, certificato medico sportivo), DO NOT use start_booking. Instead:
 1. Say: "Mi dispiace, la prenotazione per visite di medicina sportiva non è disponibile tramite questo servizio automatico."
-2. Ask: "Vuoi che ti trasferisca a un operatore umano che potrà aiutarti?"
+2. Ask: "Vuoi che ti trasferisca a un operatore umano che potrà aiutarti?" (ONLY if call center is OPEN)
 3. If they say yes → call request_transfer with immediate=true
 4. If they say no → ask how else you can help
 

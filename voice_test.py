@@ -28,7 +28,7 @@ from loguru import logger
 # ============================================================================
 # TEST CONFIGURATION - Change these before running
 # ============================================================================
-TEST_BUSINESS_STATUS = "open"  # "open" | "close" | "after_hours"
+TEST_BUSINESS_STATUS = "after_hours"  # "open" | "close" | "after_hours"
 # ============================================================================
 
 

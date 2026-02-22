@@ -49,4 +49,4 @@ async def handle_end_price_inquiry(args: FlowArgs, flow_manager: FlowManager) ->
     return {
         "success": True,
         "message": "Price inquiry ended"
-    }, create_router_node()
+    }, create_router_node(business_status=flow_manager.state.get("business_status", "open"))

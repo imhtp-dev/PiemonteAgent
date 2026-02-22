@@ -40,7 +40,8 @@ async def initialize_flow_manager(flow_manager: TrackedFlowManager, start_node: 
     if start_node == "router":
         # NEW: Start with unified router node (default)
         from flows.nodes.router import create_router_node
-        await flow_manager.initialize(create_router_node())
+        business_status = flow_manager.state.get("business_status", "open")
+        await flow_manager.initialize(create_router_node(business_status=business_status))
     elif start_node == "greeting":
         # Direct to booking greeting (for testing/debugging)
         await flow_manager.initialize(create_greeting_node())

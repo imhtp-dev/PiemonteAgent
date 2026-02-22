@@ -103,4 +103,4 @@ async def transfer_from_booking_to_info_handler(
         "user_question": user_question,
         "post_booking": True,
         "timestamp": __import__('datetime').datetime.now().isoformat()
-    }, create_router_node()
+    }, create_router_node(business_status=flow_manager.state.get("business_status", "open"))
