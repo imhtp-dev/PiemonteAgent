@@ -33,7 +33,7 @@ TEST_BUSINESS_STATUS = "after_hours"  # "open" | "close" | "after_hours"
 
 
 # ============================================================================
-# LATENCY TRACKER - For comparing with Gemini Live
+# LATENCY TRACKER - For comparing with Gemini Liv
 # ============================================================================
 
 class LatencyTracker:
