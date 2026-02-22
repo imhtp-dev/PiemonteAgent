@@ -422,29 +422,77 @@ async def global_request_transfer(
 ) -> Tuple[Dict[str, Any], Optional[NodeConfig]]:
     """
     Handle user request to transfer to human operator.
-    LLM decided to transfer → just transfer. Always.
+
+    Two paths controlled by LLM via 'immediate' parameter:
+    1. immediate=true (sports medicine, lab, etc.) → transfer NOW
+    2. immediate=false (patient just says "transfer me") → try to help first,
+       transfer only after failure (FailureTracker threshold=1)
+
+    Both paths blocked when call center is closed/after_hours.
     """
     try:
-        reason = args.get("reason", "user request").strip()
+        from utils.failure_tracker import FailureTracker
 
-        logger.info(f"📞 [GLOBAL] Transfer requested: {reason}")
+        reason = args.get("reason", "user request").strip()
+        immediate = args.get("immediate", False)
+
+        logger.info(f"📞 [GLOBAL] Transfer requested: {reason} | immediate={immediate}")
+
+        # Block transfer when call center is closed
+        business_status = flow_manager.state.get("business_status", "close")
+        if business_status in ("close", "after_hours"):
+            logger.warning(f"🚫 Transfer blocked — business_status={business_status}")
+            return {
+                "success": False,
+                "message": "Il call center è attualmente chiuso. Non è possibile trasferire la chiamata a un operatore in questo momento. Puoi comunque rispondere alle domande informative del paziente."
+            }, None
 
         # Store transfer info
-        flow_manager.state["transfer_requested"] = True
         flow_manager.state["transfer_reason"] = reason
-        flow_manager.state["transfer_type"] = "capability_limitation"
         flow_manager.state["transfer_timestamp"] = str(asyncio.get_event_loop().time())
 
-        # Execute escalation API call
-        await _handle_transfer_escalation(flow_manager)
+        # PATH 1: IMMEDIATE — agent cannot help (sports medicine, lab)
+        if immediate:
+            logger.info(f"🚫 Immediate transfer — capability limitation: {reason[:50]}")
+            flow_manager.state["transfer_requested"] = True
+            flow_manager.state["transfer_type"] = "capability_limitation"
 
-        # Transition to transfer node
-        from flows.nodes.transfer import create_transfer_node
+            await _handle_transfer_escalation(flow_manager)
+
+            from flows.nodes.transfer import create_transfer_node
+            return {
+                "success": True,
+                "reason": reason,
+                "transfer_type": "capability_limitation"
+            }, create_transfer_node()
+
+        # PATH 2: GENERIC — patient just wants operator, try to help first
+        # But if patient already asked once (transfer_requested is set), respect their insistence
+        tracker = flow_manager.state.get("failure_tracker", {})
+        if tracker.get("transfer_requested") or tracker.get("in_transfer_attempt"):
+            logger.info("📞 Patient insisting on transfer (2nd request) — transferring now")
+            flow_manager.state["transfer_requested"] = True
+            flow_manager.state["transfer_type"] = "patient_insistence"
+
+            await _handle_transfer_escalation(flow_manager)
+
+            from flows.nodes.transfer import create_transfer_node
+            return {
+                "success": True,
+                "reason": reason,
+                "transfer_type": "patient_insistence"
+            }, create_transfer_node()
+
+        # First time asking — try to help first
+        logger.info("📞 Generic transfer request — asking what user needs before transferring")
+        FailureTracker.mark_transfer_requested(flow_manager.state)
+
         return {
             "success": True,
+            "pending_transfer": True,
             "reason": reason,
-            "transfer_type": "capability_limitation"
-        }, create_transfer_node()
+            "message": "Dimmi di cosa hai bisogno. Se non riesco ad aiutarti, ti trasferirò a un operatore umano."
+        }, None  # Stay at current node
 
     except Exception as e:
         logger.error(f"❌ Transfer request error: {e}")
@@ -708,6 +756,15 @@ async def global_cancel_previous_appointment(
     try:
         reason = args.get("reason", "Cancellazione/spostamento appuntamento precedente")
         logger.info(f"📞 [GLOBAL] Cancel previous appointment: {reason}")
+
+        # Block transfer when call center is closed
+        business_status = flow_manager.state.get("business_status", "close")
+        if business_status in ("close", "after_hours"):
+            logger.warning(f"🚫 Cancel previous appointment blocked — business_status={business_status}")
+            return {
+                "success": False,
+                "message": "Il call center è attualmente chiuso. Non è possibile trasferire la chiamata per disdire o spostare un appuntamento. Il paziente può riprovare durante gli orari di apertura."
+            }, None  # Stay at current node
 
         flow_manager.state["transfer_requested"] = True
         flow_manager.state["transfer_type"] = "previous_appointment_cancellation"

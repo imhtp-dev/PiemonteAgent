@@ -25,6 +25,12 @@ from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 from loguru import logger
 
+# ============================================================================
+# TEST CONFIGURATION - Change these before running
+# ============================================================================
+TEST_BUSINESS_STATUS = "open"  # "open" | "close" | "after_hours"
+# ============================================================================
+
 
 # ============================================================================
 # LATENCY TRACKER - For comparing with Gemini Live
@@ -495,7 +501,7 @@ class DailyHealthcareFlowTester:
         node_mute_strategy.set_flow_state(self.flow_manager.state)
 
         # Store business_status, session_id, and stream_sid in flow manager state (required for info agent)
-        self.flow_manager.state["business_status"] = "open"  # Always open for testing
+        self.flow_manager.state["business_status"] = TEST_BUSINESS_STATUS
         self.flow_manager.state["session_id"] = self.session_id
         self.flow_manager.state["stream_sid"] = ""  # Empty for Daily testing (no Talkdesk)
         logger.info(f"✅ Business status stored in flow state: open (testing)")

@@ -152,7 +152,7 @@ async def call_sorting_api(
         logger.info(f"📡 Making API request to: {api_url}")
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(api_url, headers=headers, params=request_data, timeout=aiohttp.ClientTimeout(total=30)) as response:
+            async with session.get(api_url, headers=headers, params=request_data, timeout=aiohttp.ClientTimeout(total=45)) as response:
                 status = response.status
                 logger.info(f"📊 API Response Status: {status}")
 

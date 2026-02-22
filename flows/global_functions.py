@@ -124,17 +124,21 @@ GLOBAL_FUNCTIONS = [
         handler=global_clinic_info,
     ),
 
-    # 7. Request Transfer (NOW ASKS WHAT USER NEEDS FIRST)
+    # 7. Request Transfer
     FlowsFunctionSchema(
         name="request_transfer",
-        description="When user asks for human operator, call this to ask what they need help with. DO NOT say you will transfer - instead say 'Dimmi di cosa hai bisogno, se non riesco ad aiutarti ti trasferirò a un operatore.' Agent tries to help first, transfers only if it fails.",
+        description="Transfer to human operator. Set immediate=true ONLY for capability limitations (sports medicine, laboratorio). For generic 'transfer me' requests, set immediate=false — agent will try to help first.",
         properties={
             "reason": {
                 "type": "string",
                 "description": "Reason for transfer request"
+            },
+            "immediate": {
+                "type": "boolean",
+                "description": "true = agent cannot help (sports medicine, lab) → transfer now. false = patient just wants operator → try to help first."
             }
         },
-        required=["reason"],
+        required=["reason", "immediate"],
         handler=global_request_transfer,
     ),
 

@@ -234,7 +234,7 @@ def create_llm_service() -> OpenAILLMService:
     return OpenAILLMService(
         api_key=config["api_key"],
         model=config["model"],
-        function_call_timeout_secs=30.0,
+        function_call_timeout_secs=60.0,
     )
 
 

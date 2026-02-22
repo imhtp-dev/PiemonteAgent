@@ -39,6 +39,12 @@ from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 from loguru import logger
 
+# ============================================================================
+# TEST CONFIGURATION - Change these before running
+# ============================================================================
+TEST_BUSINESS_STATUS = "open"  # "open" | "close" | "after_hours"
+# ============================================================================
+
 # FastAPI
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from contextlib import asynccontextmanager
@@ -1107,7 +1113,7 @@ async def websocket_endpoint(websocket: WebSocket):
         text_output.flow_manager = flow_manager
 
         # Store business_status, session_id, and stream_sid in flow manager state (required for info agent)
-        flow_manager.state["business_status"] = "open"  # Always open for testing
+        flow_manager.state["business_status"] = TEST_BUSINESS_STATUS
         flow_manager.state["session_id"] = session_id
         flow_manager.state["stream_sid"] = ""  # Empty for text chat testing (no Talkdesk)
         flow_manager.state["interaction_id"] = "d2568ef3-b8c9-4cbc-ac90-6100d4c0e8c0"  # ✅ Simulated Talkdesk interaction ID
