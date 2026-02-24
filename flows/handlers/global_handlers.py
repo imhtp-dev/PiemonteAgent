@@ -694,7 +694,7 @@ async def global_cancel_and_restart(
             "preferred_date", "preferred_time", "first_available_mode",
             "time_preference", "start_time", "end_time",
             "selected_slot", "available_slots",
-            "is_cerba_member", "cerba_membership_asked",
+            "is_cerba_member", "cerba_membership_asked", "slot_cache",
             "final_health_centers", "pending_center_search_params",
             "pending_slot_search_params", "pending_slot_booking_params",
             "cached_all_slots", "cached_search_params",

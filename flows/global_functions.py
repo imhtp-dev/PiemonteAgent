@@ -191,7 +191,7 @@ GLOBAL_FUNCTIONS = [
     # 11. Cancel Booking and Restart (TRANSITIONS)
     FlowsFunctionSchema(
         name="cancel_and_restart",
-        description="Cancel current booking and go back to main menu. Use when patient says: 'voglio cambiare prenotazione', 'annulla la prenotazione corrente', 'voglio prenotare qualcos'altro', 'ricominciamo da capo'. Deletes any reserved slots and returns to router. ONLY for the current booking in progress, NOT for previously booked appointments.",
+        description="Cancel current booking COMPLETELY and go back to main menu. ONLY use when patient EXPLICITLY wants to cancel/abort the entire booking or start a completely different booking from scratch. Examples: 'annulla tutto', 'non voglio più prenotare', 'ricominciamo da capo', 'voglio prenotare qualcos'altro'. Do NOT use when patient wants to change date/time/slot — that is NOT a cancellation. Do NOT use when patient says 'no' to a question or declines an option. Deletes ALL reserved slots and clears ALL booking state.",
         properties={},
         required=[],
         handler=global_cancel_and_restart,

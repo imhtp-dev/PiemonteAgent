@@ -13,8 +13,7 @@ from loguru import logger
 
 from models.requests import HealthService, HealthCenter
 
-# Global variable to store current session's filtered slots for UUID lookup
-_current_session_slots = {}
+# REMOVED: _current_session_slots global — replaced by flow_manager.state["slot_cache"] (date-keyed)
 from flows.handlers.flow_handlers import generate_flow_and_transition, finalize_services_and_search_centers
 from flows.handlers.booking_handlers import (
     search_final_centers_and_transition,
@@ -365,6 +364,11 @@ def create_cerba_membership_node() -> NodeConfig:
 
 CRITICAL: When user responds YES or NO, you MUST call check_cerba_membership function with is_cerba_member=true or is_cerba_member=false.
 
+If the patient says they want to change the date, time, or any booking detail:
+- Reassure them that they will be able to change the date/time in the NEXT step where we show a booking summary
+- But FIRST they need to answer if they have a Cerba Card or not, because it affects the pricing shown in the summary
+- Then call check_cerba_membership based on their answer
+
 Do NOT say "finalizing booking" or proceed without calling the function. {settings.language_config}"""
         }],
         task_messages=[{
@@ -528,7 +532,7 @@ def create_slot_search_node() -> NodeConfig:
     )
 
 
-def create_slot_selection_node(slots: List[Dict], service: HealthService, is_cerba_member: bool = False, user_preferred_date: str = None, time_preference: str = "any time", first_available_mode: bool = False, is_automatic_search: bool = False, first_appointment_date: str = None) -> NodeConfig:
+def create_slot_selection_node(slots: List[Dict], service: HealthService, is_cerba_member: bool = False, user_preferred_date: str = None, time_preference: str = "any time", first_available_mode: bool = False, is_automatic_search: bool = False, first_appointment_date: str = None, slot_cache: dict = None) -> NodeConfig:
     """Create slot selection node with progressive filtering and minimal LLM data
 
     Args:
@@ -854,16 +858,19 @@ Ask the user which time works best for them."""
             task_content = f"We have appointments available on these dates:\n\n- {dates_text}\n\nWhich date would you prefer? Then I'll show you the available times."
             logger.info(f"ℹ️ DATE SELECTION: Showing {len(slots_by_date)} available dates")
 
-    # Step 3: Create MINIMAL slot data for LLM AND store full slot data globally
+    # Step 3: Create MINIMAL slot data for LLM AND store in date-keyed slot_cache
     if selected_slots_for_llm:
-        # Store the selected slots for UUID lookup later
-        global _current_session_slots
-        _current_session_slots = {}
+        # Write to slot_cache (date-keyed) instead of global
+        if slot_cache is not None:
+            date_key = selected_slots_for_llm[0]['date_key']
+            slot_cache[date_key] = {"parsed_by_time": {}}
+            for slot in selected_slots_for_llm:
+                slot_cache[date_key]["parsed_by_time"][slot['start_time_24h']] = slot
+            logger.info(f"📦 SLOT_CACHE: Stored {len(selected_slots_for_llm)} slots under date_key={date_key}")
 
         minimal_slots_for_llm = []
         for slot in selected_slots_for_llm:
             time_key = slot['start_time_24h']
-            _current_session_slots[time_key] = slot  # Store full slot data by time
 
             # Convert time to Italian words for natural speech (prevents TTS double-reading)
             time_italian = time_to_italian_words(time_key)

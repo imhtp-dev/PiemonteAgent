@@ -935,7 +935,8 @@ async def update_date_and_search_slots(args: FlowArgs, flow_manager: FlowManager
                 service=display_service,
                 is_cerba_member=flow_manager.state.get("is_cerba_member", False),
                 user_preferred_date=user_preferred_date,
-                time_preference=time_preference_state
+                time_preference=time_preference_state,
+                slot_cache=flow_manager.state.setdefault("slot_cache", {})
             )
         else:
             error_message = f"No available slots found for {current_service_name} on {preferred_date}"
@@ -1282,7 +1283,8 @@ async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowM
                 time_preference=time_preference,
                 first_available_mode=first_available_mode,
                 is_automatic_search=is_automatic_search,
-                first_appointment_date=first_appointment_date
+                first_appointment_date=first_appointment_date,
+                slot_cache=flow_manager.state.setdefault("slot_cache", {})
             )
         else:
             error_message = f"No available slots found for {current_service_name} on {preferred_date}"
@@ -1358,13 +1360,25 @@ async def select_slot_and_book(args: FlowArgs, flow_manager: FlowManager) -> Tup
 
     logger.info(f"🔍 Searching for slot: UUID={providing_entity_availability_uuid}, Time={selected_time}, Date={selected_date}")
 
-    # SMART LOOKUP: Check if we have time→UUID mapping from smart filtering
-    from flows.nodes.booking import _current_session_slots
-    if selected_time and selected_time in _current_session_slots:
-        logger.info(f"🎯 SMART LOOKUP: Found slot by time '{selected_time}' in filtered session slots")
-        selected_slot = _current_session_slots[selected_time]['original']
-        logger.info(f"✅ Using smart-filtered slot: UUID={selected_slot.get('providing_entity_availability_uuid')}")
-    else:
+    # SMART LOOKUP: Check date-keyed slot_cache for precise date+time matching
+    from utils.date_parser import parse_readable_date
+    slot_cache = flow_manager.state.get("slot_cache", {})
+    date_key = parse_readable_date(selected_date) if selected_date else None
+
+    if selected_time and date_key and date_key in slot_cache:
+        cached = slot_cache[date_key].get("parsed_by_time", {})
+        if selected_time in cached:
+            selected_slot = cached[selected_time]['original']
+            logger.info(f"🎯 CACHE HIT: Found slot {date_key} {selected_time}")
+    elif selected_time:
+        # Fallback: try ALL dates in cache (user might not provide date)
+        for d, data in slot_cache.items():
+            if selected_time in data.get("parsed_by_time", {}):
+                selected_slot = data["parsed_by_time"][selected_time]['original']
+                logger.info(f"🎯 CACHE FALLBACK: Found {selected_time} on {d}")
+                break
+
+    if not selected_slot:
         logger.info(f"🔍 FALLBACK: Using traditional UUID/time matching in all {len(available_slots)} slots")
 
         for slot in available_slots:
@@ -1603,7 +1617,7 @@ async def _proceed_to_cerba_or_summary(flow_manager, slot_uuid) -> Tuple[Dict[st
         if has_cerba_pricing:
             break
 
-    if has_cerba_pricing:
+    if has_cerba_pricing and "is_cerba_member" not in flow_manager.state:
         logger.info("💳 Cerba card pricing available on booked slots, asking membership")
         from flows.nodes.booking import create_cerba_membership_node
         return {
@@ -2102,18 +2116,32 @@ async def confirm_booking_summary_and_proceed(args: FlowArgs, flow_manager: Flow
     elif action == "change":
         logger.info("🔄 Patient wants to change booking details")
 
-        # Instead of restarting completely, go back to slot selection with available slots
-        # This preserves the service, center, and date but allows time change
+        # Cancel the last booked slot (the one shown in summary) before re-selecting
+        booked_slots = flow_manager.state.get("booked_slots", [])
+        if booked_slots:
+            last_slot = booked_slots.pop()
+            last_uuid = last_slot.get("slot_uuid")
+            if last_uuid:
+                try:
+                    delete_response = delete_slot(last_uuid)
+                    if delete_response.status_code == 200:
+                        logger.info(f"🗑️ Cancelled last slot for change: {last_uuid}")
+                    else:
+                        logger.warning(f"⚠️ Failed to cancel slot {last_uuid}: HTTP {delete_response.status_code}")
+                except Exception as e:
+                    logger.error(f"❌ Error cancelling slot {last_uuid}: {e}")
+
+        # Go back to slot selection WITHOUT a preferred date so the node enters
+        # date-selection mode — user can pick a date or search_different_date.
+        # This prevents re-showing stale slots from the old preferred_date.
         available_slots = flow_manager.state.get("available_slots", [])
         selected_services = flow_manager.state.get("selected_services", [])
         current_service_index = flow_manager.state.get("current_service_index", 0)
 
         if available_slots and selected_services:
             current_service = selected_services[current_service_index]
-            user_preferred_date = flow_manager.state.get("preferred_date")
-            time_preference = flow_manager.state.get("time_preference", "any time")
 
-            logger.info(f"🔄 Returning to slot selection for {current_service.name}")
+            logger.info(f"🔄 Returning to slot selection (date-selection mode) for {current_service.name}")
 
             from flows.nodes.booking import create_slot_selection_node
             return {
@@ -2123,8 +2151,9 @@ async def confirm_booking_summary_and_proceed(args: FlowArgs, flow_manager: Flow
                 slots=available_slots,
                 service=current_service,
                 is_cerba_member=flow_manager.state.get("is_cerba_member", False),
-                user_preferred_date=user_preferred_date,
-                time_preference=time_preference
+                user_preferred_date=None,
+                time_preference="any time",
+                slot_cache=flow_manager.state.setdefault("slot_cache", {})
             )
         else:
             # Fallback: go back to date/time selection
@@ -2232,7 +2261,8 @@ async def show_more_same_day_slots_handler(args: FlowArgs, flow_manager: FlowMan
             is_cerba_member=cached_params.get("is_cerba_member", False),
             user_preferred_date=earliest_date,
             time_preference=cached_params.get("time_preference", "any time"),
-            first_available_mode=False  # Show all slots now
+            first_available_mode=False,  # Show all slots now
+            slot_cache=flow_manager.state.setdefault("slot_cache", {})
         )
 
     except Exception as e:
@@ -2334,7 +2364,8 @@ async def search_different_date_handler(args: FlowArgs, flow_manager: FlowManage
                 is_cerba_member=flow_manager.state.get("is_cerba_member", False),
                 user_preferred_date=new_date,
                 time_preference=time_preference,
-                first_available_mode=False
+                first_available_mode=False,
+                slot_cache=flow_manager.state.setdefault("slot_cache", {})
             )
         else:
             logger.warning(f"⚠️ No slots found on {new_date}")
