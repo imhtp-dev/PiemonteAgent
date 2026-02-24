@@ -435,6 +435,10 @@ def create_collect_datetime_node(service_name: str = None, is_multi_service: boo
 
 Today is {today_day}, {today_formatted} (date: {today_date}). The current year is {settings.current_year}.
 
+🚨 CRITICAL: You MUST ask the patient for their preferred date and time FIRST.
+NEVER call collect_datetime automatically without the patient explicitly stating a date or time preference.
+Wait for the patient to respond before calling any function.
+
 You can understand natural language date expressions and calculate the correct dates automatically. When a patient mentions expressions like:
 - "tomorrow" → calculate the next day
 - "next Friday" → calculate the next Friday from today
@@ -443,7 +447,7 @@ You can understand natural language date expressions and calculate the correct d
 - "next Thursday" → calculate the next Thursday (if today is Thursday, it means the following Thursday)
 
 🚀 SPECIAL: "FIRST AVAILABLE" / "MOST RECENT" REQUESTS:
-If the patient says ANY of these phrases:
+ONLY if the patient EXPLICITLY says one of these phrases:
 - "most recent availability" / "disponibilità più recente"
 - "first available" / "prima disponibilità"
 - "earliest possible" / "il prima possibile"
@@ -928,15 +932,17 @@ Ask the user which time works best for them."""
         role_content = f"""Help the patient choose an appointment date for {service.name}.
 
 You are in DATE SELECTION mode. The patient needs to pick a date first.
-Once they choose a date, call update_date_preference with that date in YYYY-MM-DD format.
+Once they choose a date from the available list, call update_date_preference with that date in YYYY-MM-DD format.
 
 AVAILABLE DATES: {slot_context.get('available_dates', [])}
 TOTAL SLOTS across all dates: {slot_context.get('total_slots', 0)}
 
 RULES:
 - Present the dates naturally from the task message below
-- When patient picks a date, IMMEDIATELY call update_date_preference
+- When patient picks a date from the AVAILABLE DATES list, IMMEDIATELY call update_date_preference
+- If patient requests a date NOT in the available dates list (e.g., a different week, different month), call search_different_date with the requested date to search for new slots on that date
 - Do NOT say there are no available times — times will load after date selection
+- Do NOT tell the patient that a date is unavailable without first searching for it using search_different_date
 - Never mention prices, UUIDs, or technical details
 - Be conversational and human
 
@@ -944,7 +950,7 @@ RULES:
 
     return NodeConfig(
         name="slot_selection",
-        context_strategy=ContextStrategyConfig(strategy=ContextStrategy.RESET),
+        context_strategy=ContextStrategyConfig(strategy=ContextStrategy.APPEND),
         role_messages=[{
             "role": "system",
             "content": role_content
