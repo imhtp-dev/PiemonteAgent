@@ -1,13 +1,12 @@
 """
 Node-Aware User Mute Strategy
 
-Mutes user input during bot speech ONLY on processing/transition nodes.
+Mutes user input on processing/transition nodes for their entire lifetime.
 On regular conversation nodes, user can still interrupt normally.
 
-Processing nodes are non-conversational — they speak a "please wait" message
-(tts_say pre-action) then execute an API call. User input during these nodes
-causes LLM to pick wrong global functions or generate text without calling
-any function, resulting in the bot looping/getting stuck.
+Processing nodes have a tts_say → API call pattern where a 10-20ms gap between
+TTS queue and BotStartedSpeakingFrame allows VAD to fire, causing the LLM
+to pick wrong global functions (e.g. start_booking during flow_processing).
 
 Usage:
     strategy = NodeAwareMuteStrategy()
@@ -19,21 +18,16 @@ from loguru import logger
 from pipecat.frames.frames import BotStartedSpeakingFrame, BotStoppedSpeakingFrame, Frame
 from pipecat.turns.user_mute.base_user_mute_strategy import BaseUserMuteStrategy
 
-# Nodes where user interruption should be suppressed during bot speech.
-# These are processing/transition nodes that:
-# 1. Speak a "please wait" TTS message (tts_say pre-action)
-# 2. Then auto-call an API function
-# User input during these causes LLM misfires.
+# Processing nodes — always mute, no user input allowed for entire node lifetime.
+# Closes the timing gap between tts_say queue and BotStartedSpeakingFrame.
 PROCESSING_NODES = {
-    # tts_say pre-action + immediate API call
     "search_processing",           # Health service search
+    "slot_search_processing",      # Slot search API
+    "slot_booking_processing",     # Slot booking API
     "flow_processing",             # Flow/decision tree generation
     "center_search_processing",    # Center search API
-    "slot_search_processing",      # Slot search API
     "automatic_slot_search",       # Auto slot search for 2nd+ services
-    "slot_booking_processing",     # Slot booking API
     "booking_processing",          # Final booking creation API
-    # Auto-call pattern (LLM told to call immediately, no user interaction)
     "orange_box_flow_generation",  # Generate decision flow
     "final_center_search",         # Search centers
     "slot_search",                 # Search slots
@@ -42,10 +36,7 @@ PROCESSING_NODES = {
 
 
 class NodeAwareMuteStrategy(BaseUserMuteStrategy):
-    """Mutes user during bot speech on processing/transition nodes only.
-
-    On processing nodes: behaves like AlwaysUserMuteStrategy (mute during bot speech)
-    On regular nodes: does nothing (allows normal interruptions)
+    """Mutes user on processing/transition nodes for entire node lifetime.
 
     Combined with FunctionCallUserMuteStrategy via OR logic:
     - FunctionCallUserMuteStrategy covers function execution time
@@ -62,25 +53,22 @@ class NodeAwareMuteStrategy(BaseUserMuteStrategy):
         self._flow_state = state
         logger.debug("NodeAwareMuteStrategy linked to flow state")
 
-    def _is_processing_node(self) -> bool:
-        """Check if current node is a processing/transition node."""
+    def _get_current_node(self) -> str:
         if not self._flow_state:
-            return False
-        current_node = self._flow_state.get("current_node", "")
-        return current_node in PROCESSING_NODES
+            return ""
+        return self._flow_state.get("current_node", "")
 
     async def process_frame(self, frame: Frame) -> bool:
-        """Return True to mute user, False to allow.
-
-        Tracks bot speaking state via BotStarted/StoppedSpeakingFrame.
-        Only mutes when bot is speaking AND we're on a processing node.
-        """
+        """Return True to mute user, False to allow."""
         if isinstance(frame, BotStartedSpeakingFrame):
             self._bot_speaking = True
         elif isinstance(frame, BotStoppedSpeakingFrame):
             self._bot_speaking = False
 
-        if self._bot_speaking and self._is_processing_node():
+        current_node = self._get_current_node()
+
+        # Always mute on processing nodes — no timing gap possible
+        if current_node in PROCESSING_NODES:
             return True
 
         return False
