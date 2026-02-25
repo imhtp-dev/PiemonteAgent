@@ -157,31 +157,25 @@ When user responds, call verify_basic_info: confirms → action="confirm", chang
         ]
     )
 
-def create_flow_processing_node(service_name: str, tts_message: str) -> NodeConfig:
-    """Create a processing node that speaks immediately before performing flow generation"""
-    from flows.handlers.flow_handlers import perform_flow_generation_and_transition
+def create_silent_center_search_and_flow_node() -> NodeConfig:
+    """Silent node: center search + flow generation. No TTS, no pre_actions."""
+    from flows.handlers.flow_handlers import perform_silent_center_search_and_generate_flow
 
     return NodeConfig(
-        name="flow_processing",
-        pre_actions=[
-            {
-                "type": "tts_say",
-                "text": tts_message
-            }
-        ],
+        name="silent_center_search_processing",
         role_messages=[{
             "role": "system",
-            "content": f"You are processing flow generation for {service_name}. Immediately call perform_flow_generation to execute the actual flow analysis. {settings.language_config}"
+            "content": "Call perform_silent_center_search immediately."
         }],
         task_messages=[{
             "role": "system",
-            "content": f"Now analyzing {service_name} for special requirements and additional options. Please wait."
+            "content": "Call perform_silent_center_search now."
         }],
         functions=[
             FlowsFunctionSchema(
-                name="perform_flow_generation",
-                handler=perform_flow_generation_and_transition,
-                description="Execute the actual flow generation after TTS message",
+                name="perform_silent_center_search",
+                handler=perform_silent_center_search_and_generate_flow,
+                description="Search centers and generate flow. Call immediately.",
                 properties={},
                 required=[]
             )

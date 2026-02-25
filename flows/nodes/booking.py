@@ -14,7 +14,7 @@ from loguru import logger
 from models.requests import HealthService, HealthCenter
 
 # REMOVED: _current_session_slots global — replaced by flow_manager.state["slot_cache"] (date-keyed)
-from flows.handlers.flow_handlers import generate_flow_and_transition, finalize_services_and_search_centers
+from flows.handlers.flow_handlers import finalize_services_and_search_centers
 from flows.handlers.booking_handlers import (
     search_final_centers_and_transition,
     select_center_and_book,
@@ -33,30 +33,6 @@ from flows.handlers.booking_handlers import (
 from config.settings import settings
 from utils.italian_time import time_to_italian_words
 
-
-def create_orange_box_node() -> NodeConfig:
-    """Create the Orange Box node that generates decision flows"""
-    return NodeConfig(
-        name="orange_box_flow_generation",
-        role_messages=[{
-            "role": "system",
-            "content": f"Call generate_flow function to analyze service requirements. {settings.language_config}"
-        }],
-        task_messages=[{
-            "role": "system",
-            "content": "Call generate_flow now to check for special requirements."
-        }],
-        functions=[
-            FlowsFunctionSchema(
-                name="generate_flow",
-                handler=generate_flow_and_transition,
-                description="Generate decision flow for the selected service. Call this immediately.",
-                properties={},
-                required=[]
-            )
-        ]
-        # respond_immediately=True  # DISABLED FOR TESTING - enable in production
-    )
 
 
 def create_flow_navigation_node(generated_flow: dict, service_name: str, pending_additional_request: str = "") -> NodeConfig:

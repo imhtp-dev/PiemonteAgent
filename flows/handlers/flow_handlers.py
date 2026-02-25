@@ -8,126 +8,144 @@ from loguru import logger
 
 from pipecat_flows import FlowManager, NodeConfig, FlowArgs
 from services.get_flowNb import genera_flow
+from services.cerba_api import cerba_api
+from utils.api_retry import retry_api_call
 from models.requests import HealthService
 
+# Fallback HC UUID (Tradate) if center search finds nothing at max radius
+FALLBACK_HC_UUID = "c5535638-6c18-444c-955d-89139d8276be"
 
-async def generate_flow_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
-    """Generate decision flow for the selected service and transition to flow navigation"""
+# Silent radius expansion steps (no user interaction)
+SILENT_RADIUS_STEPS = [None, 42, 62]  # None = API default 22km
+
+
+async def perform_silent_center_search_and_generate_flow(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
+    """Silent center search + flow generation in one step. No TTS, no user interaction."""
     try:
-        # Get selected services from state
         selected_services = flow_manager.state.get("selected_services", [])
         if not selected_services:
             from flows.nodes.completion import create_error_node
-            return {"success": False, "message": "No service selected"}, create_error_node("No service selected. Please restart booking.")
-        
-        # Get patient info
-        gender = flow_manager.state.get("patient_gender")
-        date_of_birth = flow_manager.state.get("patient_dob") 
-        address = flow_manager.state.get("patient_address")
-        
-        if not all([gender, date_of_birth, address]):
-            from flows.nodes.completion import create_error_node
-            return {"success": False, "message": "Missing patient information"}, create_error_node("Missing patient information. Please restart booking.")
-        
-        # Use first selected service to generate initial flow
+            return {"success": False}, create_error_node("No service selected. Please restart booking.")
+
         primary_service = selected_services[0]
+        gender = flow_manager.state.get("patient_gender", "m")
+        dob = flow_manager.state.get("patient_dob", "")
+        address = flow_manager.state.get("patient_address", "")
 
-        # Store flow generation parameters for processing node
-        flow_manager.state["pending_flow_params"] = {
-            "primary_service": primary_service,
-            "selected_services": selected_services,
-            "gender": gender,
-            "date_of_birth": date_of_birth,
-            "address": address
-        }
+        # Format DOB: "1979-06-19" → "19790619"
+        dob_formatted = dob.replace("-", "") if dob else "19900811"
 
-        # Create intermediate node with pre_actions for immediate TTS
-        flow_generation_status_text = f"Sto analizzando {primary_service.name} per determinare se ci sono requisiti speciali o opzioni aggiuntive. Attendi..."
+        # Get service UUIDs for center search
+        service_uuids = [s.uuid for s in selected_services]
 
-        from flows.nodes.patient_info import create_flow_processing_node
-        return {
-            "success": True,
-            "message": f"Starting flow generation for {primary_service.name}"
-        }, create_flow_processing_node(primary_service.name, flow_generation_status_text)
+        logger.info(f"🔇 Silent center search for {len(service_uuids)} services near {address}")
 
-    except Exception as e:
-        logger.error(f"❌ Flow generation initialization error: {e}")
-        from flows.nodes.completion import create_error_node
-        return {
-            "success": False,
-            "message": "Flow generation failed. Please try again."
-        }, create_error_node("Flow generation failed. Please try again.")
-
-
-async def perform_flow_generation_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
-    """Perform the actual flow generation after TTS message"""
-    # Hardcoded health center UUID for flow generation (Tradate center)
-    # This avoids API call - actual center search happens later in Stage 5
-    HARDCODED_HC_UUID = "c5535638-6c18-444c-955d-89139d8276be"
-
-    try:
-        # Get stored flow parameters
-        params = flow_manager.state.get("pending_flow_params", {})
-        if not params:
-            from flows.nodes.completion import create_error_node
-            return {
-                "success": False,
-                "message": "Missing flow parameters"
-            }, create_error_node("Missing flow parameters. Please start over.")
-
-        # Extract parameters
-        primary_service = params["primary_service"]
-        selected_services = params["selected_services"]
-        gender = params["gender"]
-        date_of_birth = params["date_of_birth"]
-        address = params["address"]
-
-        logger.info(f"🔄 Generating decision flow for: {primary_service.name}")
-        logger.info(f"🏥 Using hardcoded health center UUID for flow generation: {HARDCODED_HC_UUID}")
-
-        # Use hardcoded health center UUID for flow generation
-        # Actual center availability will be checked in Stage 5 with radius expansion
-        hc_uuids = [HARDCODED_HC_UUID]
-        logger.info(f"🔄 Calling genera_flow with: centers={hc_uuids}, service={primary_service.uuid}")
-
+        # --- Silent auto-expanding center search ---
         import asyncio
         loop = asyncio.get_event_loop()
-        logger.info(f"🔍 Starting non-blocking flow generation")
+        health_centers = []
+
+        for radius in SILENT_RADIUS_STEPS:
+            radius_display = radius if radius else "22 (default)"
+            logger.info(f"🔍 Trying radius={radius_display}km")
+
+            def _search(r=radius):
+                result, error = retry_api_call(
+                    api_func=cerba_api.get_health_centers,
+                    max_retries=2,
+                    retry_delay=1.0,
+                    func_name=f"Silent HC Search (radius={radius_display}km)",
+                    health_services=service_uuids,
+                    gender=gender,
+                    date_of_birth=dob_formatted,
+                    address=address,
+                    radius=r,
+                )
+                if error:
+                    raise error
+                return result
+
+            try:
+                health_centers = await loop.run_in_executor(None, _search)
+                if health_centers:
+                    logger.success(f"✅ Found {len(health_centers)} centers at radius={radius_display}km")
+                    break
+            except Exception as e:
+                logger.warning(f"⚠️ Center search failed at radius={radius_display}km: {e}")
+
+        # Extract HC UUIDs (or fallback)
+        if health_centers:
+            hc_uuids = [hc.uuid for hc in health_centers]
+        else:
+            logger.warning(f"⚠️ No centers found at max radius, falling back to Tradate UUID")
+            hc_uuids = [FALLBACK_HC_UUID]
+
+        flow_manager.state["orange_box_hc_uuids"] = hc_uuids
+        logger.info(f"🏥 Using {len(hc_uuids)} HC UUIDs for genera_flow")
+
+        # --- Generate flow ---
+        logger.info(f"🔄 Calling genera_flow for {primary_service.name}")
+
         generated_flow = await loop.run_in_executor(
-            None,  # Use default thread pool executor
+            None,
             genera_flow,
-            hc_uuids,  # Pass list of health center UUIDs
-            primary_service.uuid  # Pass medical exam ID
+            hc_uuids,
+            primary_service.uuid,
+            gender,
+            dob_formatted,
         )
-        logger.info(f"✅ Flow generation completed")
-        
+
         if not generated_flow:
-            logger.warning(f"Failed to generate flow for {primary_service.name}, proceeding with direct booking")
+            logger.warning(f"genera_flow returned empty for {primary_service.name}, skipping to center search")
             from flows.nodes.booking import create_final_center_search_node
-            return {"success": True, "message": "Proceeding to center selection"}, create_final_center_search_node()
-        
-        # Store the generated flow in state
+            return {"success": True, "message": "No flow generated, proceeding to center search"}, create_final_center_search_node()
+
+        # Print generated flow to terminal
+        print(f"\n{'='*60}")
+        print(f"📋 GENERATED FLOW for {primary_service.name}")
+        print(f"{'='*60}")
+        if isinstance(generated_flow, str):
+            print(generated_flow)
+        else:
+            print(json.dumps(generated_flow, indent=2, ensure_ascii=False))
+        print(f"{'='*60}\n")
+
+        # Parse generated flow
+        if isinstance(generated_flow, str):
+            generated_flow = json.loads(generated_flow)
+
+        # Check if list_health_services is empty → skip flow navigation
+        list_hs = generated_flow.get("list_health_services", [])
+        has_services = bool(list_hs) and list_hs != []
+
+        # Store flow in state
         flow_manager.state["generated_flow"] = generated_flow
-        # Note: available_centers will be populated later in Stage 5 (center search with radius expansion)
-        
-        logger.success(f"✅ Generated decision flow for {primary_service.name}")
-        
-        result = {
-            "success": True,
-            "flow_generated": True,
-            "service_name": primary_service.name,
-            "message": f"Generated decision flow for {primary_service.name}"
-        }
-        
-        # Transition to LLM-driven flow navigation
+
+        if not has_services:
+            logger.info(f"📋 No related services for {primary_service.name}, skipping flow navigation")
+            from flows.nodes.booking import create_final_center_search_node
+            return {
+                "success": True,
+                "flow_generated": True,
+                "skipped_navigation": True,
+                "message": f"No additional services for {primary_service.name}"
+            }, create_final_center_search_node()
+
+        logger.success(f"✅ Flow generated with services, proceeding to navigation")
+
         from flows.nodes.booking import create_flow_navigation_node
         pending = flow_manager.state.get("pending_additional_request", "")
-        return result, create_flow_navigation_node(generated_flow, primary_service.name, pending)
-        
+        return {
+            "success": True,
+            "flow_generated": True,
+            "message": f"Generated decision flow for {primary_service.name}"
+        }, create_flow_navigation_node(generated_flow, primary_service.name, pending)
+
     except Exception as e:
-        logger.error(f"Flow generation error: {e}")
-        from flows.nodes.completion import create_error_node
-        return {"success": False, "message": "Failed to generate decision flow"}, create_error_node("Failed to generate decision flow. Please try again.")
+        logger.error(f"❌ Silent center search + flow generation error: {e}")
+        # Don't break the flow — fall through to center search
+        from flows.nodes.booking import create_final_center_search_node
+        return {"success": False, "message": "Flow generation failed, proceeding to center search"}, create_final_center_search_node()
 
 
 async def finalize_services_and_search_centers(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:

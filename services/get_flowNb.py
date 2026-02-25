@@ -40,9 +40,9 @@ def aggiungi_unico(lista, valore, prestazione_principale):
     # Aggiunge solo se il valore non è già presente e non è la prestazione principale
     if valore not in lista and valore != prestazione_principale:
         lista.append(valore)
-def genera_flow(hc_uuid,medical_exam_id):
+def genera_flow(hc_uuid, medical_exam_id, gender="m", date_of_birth="19900811"):
     token=get_token()
-    
+
     api_url = f'https://3z0xh9v1f4.execute-api.eu-south-1.amazonaws.com/{ambiente}/amb/health-service/{medical_exam_id}'
 
     headers = {
@@ -50,10 +50,10 @@ def genera_flow(hc_uuid,medical_exam_id):
         'Content-Type': 'application/json',
     }
 
-    
+
     request_data = {
-        'gender':'m',
-        'date_of_birth':'1990-08-11',
+        'gender': gender,
+        'date_of_birth': date_of_birth,
         'health_centers':hc_uuid, # I'll pass you a multi-health center so that you can recover the services that can be performed in these centers.
     }
     response = requests.get(api_url,headers=headers,params=request_data)#,params=request_data

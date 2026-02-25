@@ -86,12 +86,12 @@ async def verify_basic_info_and_transition(args: FlowArgs, flow_manager: FlowMan
                 "message": "Basic information verified, searching for health centers"
             }, create_final_center_search_node()
 
-        # Normal booking flow — orange box
-        from flows.nodes.booking import create_orange_box_node
+        # Normal booking flow — silent center search + flow generation
+        from flows.nodes.patient_info import create_silent_center_search_and_flow_node
         return {
             "success": True,
             "message": "Basic information verified, searching for health centers"
-        }, create_orange_box_node()
+        }, create_silent_center_search_and_flow_node()
 
     elif action == "change":
         field_to_change = args.get("field_to_change", "")
