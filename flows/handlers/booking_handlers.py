@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from typing import Dict, Any, Tuple, List
 from loguru import logger
 
+from pipecat.frames.frames import TTSSpeakFrame
 from pipecat_flows import FlowManager, NodeConfig, FlowArgs
 from services.cerba_api import cerba_api
 from services.slotAgenda import list_slot, create_slot, delete_slot
@@ -36,30 +37,39 @@ def _build_booked_slots_summary(flow_manager: FlowManager) -> str:
 
 
 async def search_final_centers_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
-    """Search health centers with all selected services and transition to center selection"""
+    """Search health centers with all selected services and transition to center selection.
+
+    Consolidated handler: speaks TTS filler via queue_frame, then does API call inline.
+    No intermediate processing node needed — saves one LLM inference.
+
+    Radius progression (interactive, user must confirm each expansion):
+    - Default: 22km (API default, no radius param)
+    - First expansion: 42km (if user agrees)
+    - Second expansion: 62km (if user agrees)
+    """
     try:
         # Get all selected services from state
         selected_services = flow_manager.state.get("selected_services", [])
         if not selected_services:
             from flows.nodes.completion import create_error_node
             return {"success": False, "message": "No services selected"}, create_error_node("No services selected. Please restart booking.")
-        
+
         # Get patient information
         gender = flow_manager.state.get("patient_gender")
-        date_of_birth = flow_manager.state.get("patient_dob") 
+        date_of_birth = flow_manager.state.get("patient_dob")
         address = flow_manager.state.get("patient_address")
-        
+
         if not all([gender, date_of_birth, address]):
             from flows.nodes.completion import create_error_node
             return {"success": False, "message": "Missing patient information"}, create_error_node("Missing patient information. Please restart booking.")
-        
+
         # Prepare service UUIDs
         service_uuids = [service.uuid for service in selected_services]
         service_names = [service.name for service in selected_services]
-        
+
         logger.info(f"🏥 Final center search: services={service_names}, gender={gender}, dob={date_of_birth}, address={address}")
-        
-        # Store center search parameters for processing node
+
+        # Store center search parameters (needed by radius expansion handler)
         flow_manager.state["pending_center_search_params"] = {
             "selected_services": selected_services,
             "service_uuids": service_uuids,
@@ -69,58 +79,20 @@ async def search_final_centers_and_transition(args: FlowArgs, flow_manager: Flow
             "address": address
         }
 
-        # Create message based on service count
-        if len(service_names) == 1:
-            center_search_status_text = f"Sto cercando centri sanitari a {address} che forniscano {service_names[0]}. Attendi..."
-        else:
-            center_search_status_text = f"Sto cercando centri sanitari a {address} che offrano tutti i servizi selezionati. Attendi..."
-
-        # Create intermediate node with pre_actions for immediate TTS
-        from flows.nodes.booking import create_center_search_processing_node
-        return {
-            "success": True,
-            "message": f"Starting center search in {address}"
-        }, create_center_search_processing_node(address, center_search_status_text)
-
-    except Exception as e:
-        logger.error(f"❌ Center search initialization error: {e}")
-        from flows.nodes.completion import create_error_node
-        return {
-            "success": False,
-            "message": "Center search failed. Please try again."
-        }, create_error_node("Center search failed. Please try again.")
-
-
-async def perform_center_search_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
-    """Perform the actual center search after TTS message with interactive radius expansion
-
-    Radius progression (interactive, user must confirm each expansion):
-    - Default: 22km (API default, no radius param)
-    - First expansion: 42km (if user agrees)
-    - Second expansion: 62km (if user agrees)
-    """
-    try:
-        # Get stored center search parameters
-        params = flow_manager.state.get("pending_center_search_params", {})
-        if not params:
-            from flows.nodes.completion import create_error_node
-            return {
-                "success": False,
-                "message": "Missing center search parameters"
-            }, create_error_node("Missing center search parameters. Please start over.")
-
-        # Extract parameters
-        selected_services = params["selected_services"]
-        service_uuids = params["service_uuids"]
-        service_names = params["service_names"]
-        gender = params["gender"]
-        date_of_birth = params["date_of_birth"]
-        address = params["address"]
-
         # Check if this is a retry with expanded radius
         current_radius = flow_manager.state.get("current_search_radius", None)  # None = default 22km
 
-        # Format date for API
+        # Speak TTS filler directly via pipeline (no intermediate processing node)
+        if current_radius and current_radius > 22:
+            tts_message = f"Sto cercando centri sanitari in un raggio di {current_radius} chilometri da {address}. Attendi..."
+        elif len(service_names) == 1:
+            tts_message = f"Sto cercando centri sanitari a {address} che forniscano {service_names[0]}. Attendi..."
+        else:
+            tts_message = f"Sto cercando centri sanitari a {address} che offrano tutti i servizi selezionati. Attendi..."
+
+        tts_service = flow_manager.state.get("tts_service")
+        if tts_service:
+            await tts_service.queue_frame(TTSSpeakFrame(tts_message))
         dob_formatted = date_of_birth.replace("-", "")
 
         import asyncio
@@ -130,7 +102,6 @@ async def perform_center_search_and_transition(args: FlowArgs, flow_manager: Flo
         logger.info(f"🔍 Searching health centers with radius={radius_display}km for {len(service_uuids)} services in {address}")
 
         def _search_centers():
-            """Search health centers with current radius"""
             result, error = retry_api_call(
                 api_func=cerba_api.get_health_centers,
                 max_retries=2,
@@ -140,7 +111,7 @@ async def perform_center_search_and_transition(args: FlowArgs, flow_manager: Flo
                 gender=gender,
                 date_of_birth=dob_formatted,
                 address=address,
-                radius=current_radius  # None = API default 22km
+                radius=current_radius
             )
             if error:
                 raise error
@@ -176,7 +147,6 @@ async def perform_center_search_and_transition(args: FlowArgs, flow_manager: Flo
                     "uuid": center.uuid
                 })
 
-            # Create message based on whether search was expanded
             if flow_manager.state.get("expanded_search"):
                 message = f"Found {len(centers_data)} health centers in a broader area around {address}"
             else:
@@ -203,7 +173,6 @@ async def perform_center_search_and_transition(args: FlowArgs, flow_manager: Flo
             services_text = ", ".join(service_names)
 
             if current_radius is None:
-                # First search (22km default) failed - ask to expand to 42km
                 logger.info(f"⚠️ No centers at default 22km, asking user to expand to 42km")
                 from flows.nodes.booking import create_ask_expand_radius_node
                 return {
@@ -213,7 +182,6 @@ async def perform_center_search_and_transition(args: FlowArgs, flow_manager: Flo
                 }, create_ask_expand_radius_node(address, services_text, current_radius=22, next_radius=42)
 
             elif current_radius == 42:
-                # 42km search failed - ask to expand to 62km
                 logger.info(f"⚠️ No centers at 42km, asking user to expand to 62km")
                 from flows.nodes.booking import create_ask_expand_radius_node
                 return {
@@ -223,7 +191,6 @@ async def perform_center_search_and_transition(args: FlowArgs, flow_manager: Flo
                 }, create_ask_expand_radius_node(address, services_text, current_radius=42, next_radius=62)
 
             else:
-                # 62km search failed - maximum reached, end booking
                 logger.warning(f"⚠️ No centers found even at maximum 62km radius")
                 from flows.nodes.booking import create_no_centers_node
                 return {
@@ -234,7 +201,7 @@ async def perform_center_search_and_transition(args: FlowArgs, flow_manager: Flo
                 }, create_no_centers_node(address, services_text)
 
     except Exception as e:
-        logger.error(f"Final center search error: {e}")
+        logger.error(f"❌ Center search error: {e}")
         from flows.nodes.completion import create_error_node
         return {"success": False, "message": "Unable to find health centers"}, create_error_node("Unable to find health centers. Please try again.")
 
@@ -245,22 +212,12 @@ async def handle_radius_expansion_response(args: FlowArgs, flow_manager: FlowMan
     next_radius = args.get("next_radius", 42)
 
     if expand:
-        # User wants to expand - set the new radius and re-trigger search
+        # User wants to expand - set the new radius and re-trigger search inline
         flow_manager.state["current_search_radius"] = next_radius
         logger.info(f"📍 User agreed to expand search to {next_radius}km")
 
-        # Get address for TTS message
-        params = flow_manager.state.get("pending_center_search_params", {})
-        address = params.get("address", "your location")
-
-        # Create processing node with TTS message about expanded search
-        tts_message = f"Sto cercando centri sanitari in un raggio di {next_radius} chilometri da {address}. Attendi..."
-
-        from flows.nodes.booking import create_center_search_processing_node
-        return {
-            "success": True,
-            "message": f"Expanding search to {next_radius}km"
-        }, create_center_search_processing_node(address, tts_message)
+        # Reuse the consolidated handler which speaks TTS + does API call inline
+        return await search_final_centers_and_transition(args, flow_manager)
     else:
         # User declined expansion - end the booking flow
         logger.info(f"❌ User declined radius expansion")
@@ -333,12 +290,10 @@ async def select_center_and_book(args: FlowArgs, flow_manager: FlowManager) -> T
 
         logger.info(f"💰 Price inquiry: skipping sorting API + datetime, auto-searching slots for {tomorrow}")
 
-        from flows.nodes.booking import create_slot_search_processing_node
-        return {
-            "success": True,
-            "center_name": selected_center.name,
-            "intent": "price_inquiry"
-        }, create_slot_search_processing_node(first_service_name, tts_message)
+        tts_service = flow_manager.state.get("tts_service")
+        if tts_service:
+            await tts_service.queue_frame(TTSSpeakFrame(tts_message))
+        return await perform_slot_search_and_transition(args, flow_manager)
 
     # ============================================================================
     # SORTING API INTEGRATION
@@ -365,6 +320,11 @@ async def select_center_and_book(args: FlowArgs, flow_manager: FlowManager) -> T
         logger.debug(f"   [{idx}] {service.name} (sector: {service.sector})")
 
     try:
+        # Speak TTS filler directly to TTS processor before sorting API call
+        tts_service = flow_manager.state.get("tts_service")
+        if tts_service:
+            await tts_service.queue_frame(TTSSpeakFrame(f"Prenoto per te presso {selected_center.name}. Un momento."))
+
         # Call sorting API
         sorting_result = await call_sorting_api(
             health_center_uuid=selected_center.uuid,
@@ -689,16 +649,10 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
             }
             logger.info(f"✅ Set pending_slot_search_params for first available mode")
 
-            from flows.nodes.booking import create_slot_search_processing_node
-            return {
-                "success": True,
-                "preferred_date": preferred_date,
-                "time_preference": "first available",
-                "first_available_mode": True
-            }, create_slot_search_processing_node(
-                service_name=service_name,
-                tts_message=f"Cerco subito la prima disponibilità per {service_name}. Attendi un momento."
-            )
+            tts_service = flow_manager.state.get("tts_service")
+            if tts_service:
+                await tts_service.queue_frame(TTSSpeakFrame(f"Cerco subito la prima disponibilità per {service_name}. Attendi un momento."))
+            return await perform_slot_search_and_transition(args, flow_manager)
 
         # Parse and validate date (for normal date selection, not first available)
         date_obj = datetime.strptime(preferred_date, "%Y-%m-%d")
@@ -781,15 +735,10 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
         }
         logger.info(f"✅ Set pending_slot_search_params for date: {preferred_date}, time_pref: {time_pref}")
 
-        from flows.nodes.booking import create_slot_search_processing_node
-        return {
-            "success": True,
-            "preferred_date": preferred_date,
-            "time_preference": time_pref
-        }, create_slot_search_processing_node(
-            service_name=service_name,
-            tts_message=f"Cerco gli appuntamenti disponibili per {service_name}. Attendi un momento."
-        )
+        tts_service = flow_manager.state.get("tts_service")
+        if tts_service:
+            await tts_service.queue_frame(TTSSpeakFrame(f"Cerco gli appuntamenti disponibili per {service_name}. Attendi un momento."))
+        return await perform_slot_search_and_transition(args, flow_manager)
 
     except (ValueError, TypeError) as e:
         logger.error(f"Date/time parsing error: {e}")
@@ -888,16 +837,20 @@ async def update_date_and_search_slots(args: FlowArgs, flow_manager: FlowManager
 
         logger.info(f"🔍 Searching slots for {current_service_name} on {preferred_date}")
 
-        # Call list_slot directly
-        from services.slotAgenda import list_slot
-        slots_response = list_slot(
-            health_center_uuid=selected_center.uuid,
-            date_search=preferred_date,
-            uuid_exam=uuid_exam,
-            gender=patient_gender,
-            date_of_birth=dob_formatted,
-            start_time=start_time,
-            end_time=end_time
+        # Call list_slot in executor to avoid blocking event loop
+        import asyncio
+        loop = asyncio.get_event_loop()
+        slots_response = await loop.run_in_executor(
+            None,
+            lambda: list_slot(
+                health_center_uuid=selected_center.uuid,
+                date_search=preferred_date,
+                uuid_exam=uuid_exam,
+                gender=patient_gender,
+                date_of_birth=dob_formatted,
+                start_time=start_time,
+                end_time=end_time
+            )
         )
 
         if slots_response and len(slots_response) > 0:
@@ -991,18 +944,16 @@ async def search_slots_and_transition(args: FlowArgs, flow_manager: FlowManager)
             "current_service": current_service
         }
 
-        # Create status message based on service count
+        # Speak TTS filler directly via pipeline
         if len(selected_services) > 1:
             status_text = f"Ricerca di slot disponibili per {current_service.name}, servizio {current_service_index + 1} di {len(selected_services)}. Attendi..."
         else:
             status_text = f"Ricerca di slot disponibili per {current_service.name}. Attendi..."
 
-        # Create intermediate node with pre_actions for immediate TTS
-        from flows.nodes.booking import create_slot_search_processing_node
-        return {
-            "success": True,
-            "message": f"Starting slot search for {current_service.name}"
-        }, create_slot_search_processing_node(current_service.name, status_text)
+        tts_service = flow_manager.state.get("tts_service")
+        if tts_service:
+            await tts_service.queue_frame(TTSSpeakFrame(status_text))
+        return await perform_slot_search_and_transition(args, flow_manager)
 
     except Exception as e:
         logger.error(f"❌ Slot search initialization error: {e}")
@@ -1137,20 +1088,26 @@ async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowM
         logger.info("=" * 80)
 
         # === STEP 2.2: Call slot search API with determined UUIDs (with retry) ===
+        # Run in executor to avoid blocking event loop (lets TTS filler play during API call)
         logger.info(f"🔍 Calling list_slot API with retry...")
 
-        slots_response, slot_error = retry_api_call(
-            api_func=list_slot,
-            max_retries=2,
-            retry_delay=1.0,
-            func_name="Slot Search API",
-            health_center_uuid=selected_center.uuid,
-            date_search=preferred_date,
-            uuid_exam=uuid_exam,  # List of 1 or more UUIDs based on scenario
-            gender=patient_gender,
-            date_of_birth=dob_formatted,
-            start_time=start_time,  # Will be None if no time preference
-            end_time=end_time       # Will be None if no time preference
+        import asyncio
+        loop = asyncio.get_event_loop()
+        slots_response, slot_error = await loop.run_in_executor(
+            None,
+            lambda: retry_api_call(
+                api_func=list_slot,
+                max_retries=2,
+                retry_delay=1.0,
+                func_name="Slot Search API",
+                health_center_uuid=selected_center.uuid,
+                date_search=preferred_date,
+                uuid_exam=uuid_exam,
+                gender=patient_gender,
+                date_of_birth=dob_formatted,
+                start_time=start_time,
+                end_time=end_time
+            )
         )
 
         # Handle API failure after all retries
@@ -1516,9 +1473,6 @@ async def select_slot_and_book(args: FlowArgs, flow_manager: FlowManager) -> Tup
     logger.info(f"🎯 Slot selected: {selected_slot['start_time']} to {selected_slot['end_time']}")
     logger.info(f"🔍 DEBUG: === SLOT SELECTION COMPLETED SUCCESSFULLY ===")
 
-    # NOTE: Slot reservation will happen in the next step (perform_slot_booking_and_transition)
-    # This avoids double reservation attempts
-
     # Get required data for booking
     selected_services = flow_manager.state.get("selected_services", [])
     selected_center = flow_manager.state.get("selected_center")
@@ -1526,39 +1480,28 @@ async def select_slot_and_book(args: FlowArgs, flow_manager: FlowManager) -> Tup
     if not selected_services or not selected_center:
         return {"success": False, "message": "Missing booking information"}, None
 
-    # Calculate total cost (non-cerba prices)
-    total_cost = sum(s.get("price", 0) for s in health_services)
-
     individual_slot_price = health_services[0].get("price", 0) if health_services else 0
     flow_manager.state["slot_price"] = individual_slot_price
 
-    # Go to slot booking creation first (this will reserve the slot)
-    from flows.nodes.booking import create_slot_booking_processing_node
-
-    # Debug logging to track slot booking data
     logger.info(f"🎯 Going to slot booking creation:")
     logger.info(f"   Selected slot time: {selected_slot['start_time']} to {selected_slot['end_time']}")
     logger.info(f"   Individual price: {individual_slot_price} euro")
-    logger.info(f"   Total cost: {total_cost} euro")
     logger.info(f"   Center: {selected_center.name}")
 
-    # Store slot booking parameters for the processing node
+    # Store slot booking parameters for inline perform
     flow_manager.state["pending_slot_booking_params"] = {
         "selected_slot": selected_slot,
         "selected_services": selected_services,
-        "current_service_index": 0  # Single service booking
+        "current_service_index": 0
     }
 
-    # Create status message for slot booking
+    # Speak TTS filler directly to TTS processor, then perform booking inline
     current_service_name = selected_services[0].name if selected_services else "your appointment"
-    slot_creation_status_text = f"Prenotazione della fascia oraria per {current_service_name}. Attendi..."
+    tts_service = flow_manager.state.get("tts_service")
+    if tts_service:
+        await tts_service.queue_frame(TTSSpeakFrame(f"Prenotazione della fascia oraria per {current_service_name}. Attendi..."))
 
-    return {
-        "success": True,
-        "slot_time": f"{selected_slot['start_time']} to {selected_slot['end_time']}",
-        "providing_entity_availability_uuid": providing_entity_availability_uuid,
-        "message": f"Starting slot reservation for {current_service_name}"
-    }, create_slot_booking_processing_node(current_service_name, slot_creation_status_text)
+    return await perform_slot_booking_and_transition(args, flow_manager)
 
 
 async def create_booking_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
@@ -1578,23 +1521,20 @@ async def create_booking_and_transition(args: FlowArgs, flow_manager: FlowManage
             from flows.nodes.completion import create_error_node
             return {"success": False, "message": "No slot selected"}, create_error_node("No slot selected.")
         
-        # Store slot booking parameters for processing node
+        # Store slot booking parameters for inline perform
         flow_manager.state["pending_slot_booking_params"] = {
             "selected_slot": selected_slot,
             "selected_services": selected_services,
             "current_service_index": current_service_index
         }
 
-        # Create status message
+        # Speak TTS filler directly to TTS processor, then perform booking inline
         current_service_name = selected_services[current_service_index].name if current_service_index < len(selected_services) else "your appointment"
-        slot_creation_status_text = f"Prenotazione della fascia oraria per {current_service_name}. Attendi..."
+        tts_service = flow_manager.state.get("tts_service")
+        if tts_service:
+            await tts_service.queue_frame(TTSSpeakFrame(f"Prenotazione della fascia oraria per {current_service_name}. Attendi..."))
 
-        # Create intermediate node with pre_actions for immediate TTS
-        from flows.nodes.booking import create_slot_booking_processing_node
-        return {
-            "success": True,
-            "message": f"Starting slot booking for {current_service_name}"
-        }, create_slot_booking_processing_node(current_service_name, slot_creation_status_text)
+        return await perform_slot_booking_and_transition(args, flow_manager)
 
     except Exception as e:
         logger.error(f"❌ Slot booking initialization error: {e}")
@@ -1705,16 +1645,19 @@ async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: Flow
         logger.info("=" * 80)
         logger.info(f"📝 Proceeding with slot reservation: {start_slot} to {end_slot}")
 
-        # Call create_slot function with retry logic (this reserves the slot)
-        def _create_slot_wrapper():
-            return create_slot(start_slot, end_slot, providing_entity_availability)
+        # Call create_slot with retry in executor to avoid blocking event loop (lets TTS filler play)
+        import asyncio
+        loop = asyncio.get_event_loop()
 
-        slot_result, slot_error = retry_api_call(
-            api_func=_create_slot_wrapper,
-            max_retries=2,
-            retry_delay=1.0,
-            func_name="Slot Reservation API"
-        )
+        def _create_slot_with_retry():
+            return retry_api_call(
+                api_func=lambda: create_slot(start_slot, end_slot, providing_entity_availability),
+                max_retries=2,
+                retry_delay=1.0,
+                func_name="Slot Reservation API"
+            )
+
+        slot_result, slot_error = await loop.run_in_executor(None, _create_slot_with_retry)
 
         # Handle API failure after all retries
         if slot_error:
@@ -1883,28 +1826,15 @@ async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: Flow
                 flow_manager.state.pop("cached_search_params", None)
                 flow_manager.state.pop("first_available_mode", None)
 
-                # Create automatic slot search node (skip date/time collection)
-                from flows.nodes.booking import create_automatic_slot_search_node
-
-                # Enhanced user message with clear service indicators
-                just_booked_ordinal = current_group_index + 1  # The appointment we just booked (1-based)
-                next_appointment_ordinal = next_group_index + 1  # The appointment we're about to book (1-based)
+                # Speak TTS filler and search slots inline (no intermediate processing node)
+                just_booked_ordinal = current_group_index + 1
+                next_appointment_ordinal = next_group_index + 1
                 user_message = f"Perfetto! L'appuntamento {just_booked_ordinal} di {total_groups} è stato prenotato con successo: {current_service_name}. Ora prenoto l'appuntamento {next_appointment_ordinal} di {total_groups}: {next_group_service_names}. Cerco orari disponibili nello stesso giorno, a partire da 1 ora dopo il primo appuntamento."
 
-
-                return {
-                    "success": True,
-                    "booking_id": slot_uuid,
-                    "has_more_groups": True,
-                    "next_group_services": next_group_service_names,
-                    "progress": progress_text,
-                    "current_group": next_group_index + 1,
-                    "total_groups": total_groups,
-                    "message": user_message
-                }, create_automatic_slot_search_node(
-                    service_name=next_group_service_names,
-                    tts_message=user_message
-                )
+                tts_service = flow_manager.state.get("tts_service")
+                if tts_service:
+                    await tts_service.queue_frame(TTSSpeakFrame(user_message))
+                return await perform_slot_search_and_transition(args, flow_manager)
 
             # Legacy scenario: Check if there are more services to book (old behavior)
             elif booking_scenario == "legacy" and current_service_index + 1 < len(selected_services):
@@ -2336,16 +2266,26 @@ async def search_different_date_handler(args: FlowArgs, flow_manager: FlowManage
         # Perform new slot search with the requested date
         logger.info(f"🔎 Searching slots for {current_service_name} on {new_date}")
 
+        # Speak TTS filler before slot search
+        tts_service = flow_manager.state.get("tts_service")
+        if tts_service:
+            await tts_service.queue_frame(TTSSpeakFrame(f"Cerco disponibilità per {current_service_name} nella nuova data. Un momento."))
+
         # Format DOB for API (remove dashes)
         patient_dob = flow_manager.state.get("patient_dob", "1980-04-13")
         dob_formatted = patient_dob.replace("-", "")
 
-        slots_response = list_slot(
-            health_center_uuid=selected_center.uuid,
-            date_search=new_date,
-            uuid_exam=uuid_exam,  # Use group-aware UUID list
-            gender=flow_manager.state.get("patient_gender", "m"),
-            date_of_birth=dob_formatted
+        import asyncio
+        loop = asyncio.get_event_loop()
+        slots_response = await loop.run_in_executor(
+            None,
+            lambda: list_slot(
+                health_center_uuid=selected_center.uuid,
+                date_search=new_date,
+                uuid_exam=uuid_exam,
+                gender=flow_manager.state.get("patient_gender", "m"),
+                date_of_birth=dob_formatted
+            )
         )
 
         if slots_response and len(slots_response) > 0:

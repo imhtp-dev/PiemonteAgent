@@ -39,45 +39,18 @@ def _find_exact_match(search_term: str, services: List[HealthService]) -> Option
 
 
 async def search_health_services_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
-    """Search for health services and dynamically create next node based on results"""
+    """Search for health services and dynamically create next node based on results.
+
+    Consolidated handler: does fuzzy search inline, no intermediate processing node.
+    TTS filler spoken via tts.queue_frame() (direct to TTS processor, bypasses pipeline source).
+    """
     try:
         search_term = args.get("search_term", "").strip()
         limit = min(args.get("limit", 3), 5)
 
         logger.info(f"🔍 Flow searching health services: '{search_term}' (limit: {limit})")
 
-        # Store search parameters in flow state for the search node
-        flow_manager.state["pending_search_term"] = search_term
-        flow_manager.state["pending_search_limit"] = limit
-
-        # Create intermediate node with pre_actions for immediate TTS
-        search_status_text = f"Sto cercando servizi correlati a {search_term}. Attendi..."
-
-        from flows.nodes.service_selection import create_search_processing_node
-        return {
-            "success": True,
-            "message": f"Starting search for '{search_term}'"
-        }, create_search_processing_node(search_term, limit, search_status_text)
-
-    except Exception as e:
-        logger.error(f"Flow service search initialization error: {e}")
-        from flows.nodes.service_selection import create_search_retry_node
-        return {
-            "success": False,
-            "message": "Service search failed. Please try again.",
-            "services": []
-        }, create_search_retry_node("Service search failed. Please try again.")
-
-
-async def perform_health_services_search_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
-    """Perform the actual health services search after TTS message"""
-    try:
-        # Get stored search parameters
-        search_term = flow_manager.state.get("pending_search_term", "").strip()
-        limit = flow_manager.state.get("pending_search_limit", 3)
-
         if not search_term or len(search_term) < 2:
-            # Import node creator function
             from flows.nodes.service_selection import create_search_retry_node
             return {
                 "success": False,
@@ -85,12 +58,18 @@ async def perform_health_services_search_and_transition(args: FlowArgs, flow_man
                 "services": []
             }, create_search_retry_node("Please provide the name of a service to search for.")
 
-        # Use fuzzy search service - run in executor to avoid blocking event loop
+        # Speak TTS filler directly to TTS processor (bypasses pipeline source queue)
+        tts_service = flow_manager.state.get("tts_service")
+        if tts_service:
+            from pipecat.frames.frames import TTSSpeakFrame
+            await tts_service.queue_frame(TTSSpeakFrame(f"Cerco il servizio {search_term}. Un momento."))
+
+        # Fuzzy search inline (~23ms local operation)
         import asyncio
         loop = asyncio.get_event_loop()
         logger.info(f"🔍 Starting non-blocking fuzzy search for: '{search_term}' (limit: {limit})")
         search_result = await loop.run_in_executor(
-            None,  # Use default thread pool executor
+            None,
             fuzzy_search_service.search_services,
             search_term,
             limit
@@ -110,15 +89,12 @@ async def perform_health_services_search_and_transition(args: FlowArgs, flow_man
                 # Auto-select the matching service - skip selection node
                 logger.info(f"🎯 Auto-selecting exact match: {exact_match.name}")
 
-                # Initialize selected services list in state
                 if "selected_services" not in flow_manager.state:
                     flow_manager.state["selected_services"] = []
 
-                # Add selected service (avoid duplicates)
                 if exact_match not in flow_manager.state["selected_services"]:
                     flow_manager.state["selected_services"].append(exact_match)
 
-                # Transition directly to address collection
                 from flows.nodes.patient_info import create_collect_address_node
                 return {
                     "success": True,
@@ -144,11 +120,9 @@ async def perform_health_services_search_and_transition(args: FlowArgs, flow_man
                 "message": f"Found {search_result.count} services for '{search_term}'"
             }
 
-            # Dynamically create service selection node with found services
             from flows.nodes.service_selection import create_service_selection_node
             return result, create_service_selection_node(search_result.services, search_term)
         else:
-            # Dynamically create no results node
             error_message = search_result.message or f"No services found for '{search_term}'. Can you please provide the full service name."
             from flows.nodes.service_selection import create_search_retry_node
             return {
@@ -156,9 +130,9 @@ async def perform_health_services_search_and_transition(args: FlowArgs, flow_man
                 "message": error_message,
                 "services": []
             }, create_search_retry_node(error_message)
-    
+
     except Exception as e:
-        logger.error(f"Flow service search error: {e}")
+        logger.error(f"❌ Service search error: {e}")
         from flows.nodes.service_selection import create_search_retry_node
         return {
             "success": False,

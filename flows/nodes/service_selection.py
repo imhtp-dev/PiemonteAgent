@@ -33,7 +33,7 @@ Choose one of these services, or tell me 'say the full service name' if none of 
         name="service_selection",
         role_messages=[{
             "role": "system",
-            "content": f"Help the patient choose from the top 3 search results, and also tell them that if none of these services match, they should say the full service name to refine the search. **CRITICAL: NEVER use 1., 2., 3., or numbers when listing services. List only the service names separated by commas or line breaks, without numerical prefixes.** Speak naturally like a human. {settings.language_config}"
+            "content": f"Help the patient choose from the top 3 search results, and also tell them that if none of these services match, they should say the full service name to refine the search. **CRITICAL: NEVER use 1., 2., 3., or numbers when listing services. List only the service names separated by commas or line breaks, without numerical prefixes.** Speak naturally like a human. 🔇 SILENT FUNCTION CALLS: When calling select_service or refine_search, call it IMMEDIATELY with NO preceding text. Do NOT say 'Cerco', 'Un momento', 'Let me search' or similar — the system handles status messages automatically. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",
@@ -74,7 +74,7 @@ def create_search_retry_node(error_message: str) -> NodeConfig:
         name="search_retry",
         role_messages=[{
             "role": "system",
-            "content": f"Help the patient try searching for the service again with a better term. {settings.language_config}"
+            "content": f"Help the patient try searching for the service again with a better term. 🔇 SILENT FUNCTION CALLS: When calling search_health_services, call it IMMEDIATELY with NO preceding text. Do NOT say 'Cerco', 'Un momento', 'Let me search' or similar — the system handles status messages automatically. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",
@@ -104,33 +104,3 @@ def create_search_retry_node(error_message: str) -> NodeConfig:
     )
 
 
-def create_search_processing_node(search_term: str, limit: int, tts_message: str) -> NodeConfig:
-    """Create a processing node that speaks immediately before performing search"""
-    from flows.handlers.service_handlers import perform_health_services_search_and_transition
-
-    return NodeConfig(
-        name="search_processing",
-        pre_actions=[
-            {
-                "type": "tts_say",
-                "text": tts_message
-            }
-        ],
-        role_messages=[{
-            "role": "system",
-            "content": f"You are processing a health services search. Immediately call perform_search to execute the actual search. {settings.language_config}"
-        }],
-        task_messages=[{
-            "role": "system",
-            "content": f"Now performing search for '{search_term}'. Please wait for results."
-        }],
-        functions=[
-            FlowsFunctionSchema(
-                name="perform_search",
-                handler=perform_health_services_search_and_transition,
-                description="Execute the actual health services search after TTS message",
-                properties={},
-                required=[]
-            )
-        ]
-    )

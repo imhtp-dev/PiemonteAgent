@@ -497,6 +497,9 @@ class DailyHealthcareFlowTester:
         # CREATE FLOW MANAGER (IDENTICAL TO BOT.PY)
         self.flow_manager = create_flow_manager(self.task, llm, context_aggregator, self.transport)
 
+        # Store TTS service ref for direct queue_frame in handlers (bypasses pipeline source)
+        self.flow_manager.state["tts_service"] = tts
+
         # Link node-aware mute strategy to flow state (must be after flow_manager creation)
         node_mute_strategy.set_flow_state(self.flow_manager.state)
 

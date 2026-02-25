@@ -15,7 +15,8 @@ from pipecat.frames.frames import (
     UserStoppedSpeakingFrame,
     UserStartedSpeakingFrame,
     LLMFullResponseStartFrame,
-    LLMTextFrame
+    LLMTextFrame,
+    FunctionCallsStartedFrame,
 )
 from config.settings import settings
 
@@ -64,6 +65,14 @@ class ProcessingTimeTracker(FrameProcessor):
         # User started speaking again - cancel monitoring (user interrupted)
         elif isinstance(frame, UserStartedSpeakingFrame):
             await self._cancel_timer()
+
+        # LLM called a function — cancel timer. The handler will process and
+        # return a node transition; injecting TTS during that transition breaks
+        # pipecat-flows' node handoff (the new node's LLM prompt never fires).
+        elif isinstance(frame, FunctionCallsStartedFrame):
+            self._bot_is_responding = True
+            await self._stop_timer()
+            logger.debug("⏱️ Function call started, timer cancelled")
 
         # LLM started generating TEXT (actual response, not just function calls)
         # This frame flows downstream (LLM → TTS) and our processor NOW sees it!

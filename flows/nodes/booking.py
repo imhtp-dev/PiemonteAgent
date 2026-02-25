@@ -231,6 +231,8 @@ def create_final_center_selection_node(centers: List[HealthCenter], services: Li
 Center name → UUID mapping (for function calls only, NEVER speak UUIDs):
 {uuid_mapping}
 
+🔇 SILENT FUNCTION CALLS: When calling select_center, call it IMMEDIATELY with NO preceding text. Do NOT say "Let me book", "Perfetto, prenoto", "Un momento" or similar — the system handles status messages automatically.
+
 When patient selects a center, call select_center with the correct UUID. {settings.language_config}"""
         }],
         task_messages=[{
@@ -447,6 +449,8 @@ IMPORTANT:
 - If no time preference mentioned, set time_preference to "any"
 
 Calculate the exact date in YYYY-MM-DD format and call the collect_datetime function directly.
+
+🔇 SILENT FUNCTION CALLS: When calling collect_datetime, call it IMMEDIATELY with NO preceding text. Do NOT say "Let me search", "I'll check", "Cerco", "Un momento" or similar — the system handles status messages automatically.
 
 Always use 24-hour time format. Be flexible with user input formats. Speak naturally like a human. {settings.language_config}"""
         }],
@@ -909,6 +913,8 @@ Ask the user which time works best for them."""
 - Never mention prices, UUIDs, or technical details
 - Be conversational and human
 
+🔇 SILENT FUNCTION CALLS: When calling select_slot, call it IMMEDIATELY with NO preceding text. Do NOT say "Prenoto", "Un momento", "I'll book that" or similar — the system handles status messages automatically.
+
 {settings.language_config}"""
     else:
         # DATE SELECTION MODE — patient needs to pick a date first
@@ -1264,7 +1270,9 @@ CRITICAL ITALIAN RULES: ALWAYS say "più" (NOT "Plus"), "in punto" (NOT "o'clock
 
 If the summary includes **Preparation Notes**, read them to the patient clearly after the cost. If there are no preparation notes, do NOT mention them at all.
 
-When user confirms/cancels/changes, call confirm_booking_summary function. DO NOT say "booking confirmed" - booking happens LATER. {settings.language_config}"""
+When user confirms/cancels/changes, call confirm_booking_summary function. DO NOT say "booking confirmed" - booking happens LATER.
+
+🔇 SILENT FUNCTION CALLS: When calling confirm_booking_summary, call it IMMEDIATELY with NO preceding text. Do NOT say "Procedo", "Un momento", "Let me proceed" or similar — the system handles status messages automatically. {settings.language_config}"""
         }],
         task_messages=[{
             "role": "system",
@@ -1287,132 +1295,7 @@ When user confirms/cancels/changes, call confirm_booking_summary function. DO NO
         ]
     )
 
-def create_center_search_processing_node(address: str, tts_message: str) -> NodeConfig:
-    """Create a processing node that speaks immediately before performing center search"""
-    from flows.handlers.booking_handlers import perform_center_search_and_transition
-
-    return NodeConfig(
-        name="center_search_processing",
-        pre_actions=[
-            {
-                "type": "tts_say",
-                "text": tts_message
-            }
-        ],
-        role_messages=[{
-            "role": "system",
-            "content": f"You are processing health center search in {address}. Immediately call perform_center_search to execute the actual search. {settings.language_config}"
-        }],
-        task_messages=[{
-            "role": "system",
-            "content": f"Now searching for health centers in {address} that provide all selected services. Please wait."
-        }],
-        functions=[
-            FlowsFunctionSchema(
-                name="perform_center_search",
-                handler=perform_center_search_and_transition,
-                description="Execute the actual center search after TTS message",
-                properties={},
-                required=[]
-            )
-        ]
-    )
 
 
-def create_slot_search_processing_node(service_name: str, tts_message: str) -> NodeConfig:
-    """Create a processing node that speaks immediately before performing slot search"""
-    from flows.handlers.booking_handlers import perform_slot_search_and_transition
 
-    return NodeConfig(
-        name="slot_search_processing",
-        pre_actions=[
-            {
-                "type": "tts_say",
-                "text": tts_message
-            }
-        ],
-        role_messages=[{
-            "role": "system",
-            "content": f"You are processing slot search for {service_name}. Immediately call perform_slot_search to execute the actual search. {settings.language_config}"
-        }],
-        task_messages=[{
-            "role": "system",
-            "content": f"Now searching for available appointment slots for {service_name}. Please wait."
-        }],
-        functions=[
-            FlowsFunctionSchema(
-                name="perform_slot_search",
-                handler=perform_slot_search_and_transition,
-                description="Execute the actual slot search after TTS message",
-                properties={},
-                required=[]
-            )
-        ]
-    )
-
-
-def create_automatic_slot_search_node(service_name: str, tts_message: str) -> NodeConfig:
-    """
-    Create a processing node for automatic slot search (for 2nd+ services in separate scenario)
-    This node automatically searches for slots without asking user for date/time
-    """
-    from flows.handlers.booking_handlers import perform_slot_search_and_transition
-
-    return NodeConfig(
-        name="automatic_slot_search",
-        pre_actions=[
-            {
-                "type": "tts_say",
-                "text": tts_message
-            }
-        ],
-        role_messages=[{
-            "role": "system",
-            "content": f"You are a slot search processor for {service_name}. Your ONLY job is to call perform_slot_search. Do NOT speak to the user — the pre_actions TTS has already informed them. {settings.language_config}"
-        }],
-        task_messages=[{
-            "role": "system",
-            "content": "IMMEDIATELY call perform_slot_search. Do NOT generate any text response. Just call the function."
-        }],
-        functions=[
-            FlowsFunctionSchema(
-                name="perform_slot_search",
-                handler=perform_slot_search_and_transition,
-                description="Execute automatic slot search with pre-calculated date/time",
-                properties={},
-                required=[]
-            )
-        ]
-    )
-
-
-def create_slot_booking_processing_node(service_name: str, tts_message: str) -> NodeConfig:
-    """Create a processing node that speaks immediately before performing slot booking"""
-    from flows.handlers.booking_handlers import perform_slot_booking_and_transition
-
-    return NodeConfig(
-        name="slot_booking_processing",
-        pre_actions=[
-            {
-                "type": "tts_say",
-                "text": tts_message
-            }
-        ],
-        role_messages=[{
-            "role": "system",
-            "content": f"You are processing slot booking for {service_name}. Immediately call perform_slot_booking to execute the actual booking. {settings.language_config}"
-        }],
-        task_messages=[{
-            "role": "system",
-            "content": f"Now booking the selected time slot for {service_name}. Please wait for confirmation."
-        }],
-        functions=[
-            FlowsFunctionSchema(
-                name="perform_slot_booking",
-                handler=perform_slot_booking_and_transition,
-                description="Execute the actual slot booking after TTS message",
-                properties={},
-                required=[]
-            )
-        ]
-    )
+# slot_booking_processing removed — consolidated into inline handler (select_slot_and_book / create_booking_and_transition)

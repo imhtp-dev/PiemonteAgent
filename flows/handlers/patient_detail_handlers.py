@@ -371,14 +371,13 @@ async def confirm_details_and_create_booking(args: FlowArgs, flow_manager: FlowM
             "patient_db_id": flow_manager.state.get("patient_db_id", "")
         }
 
-        # Create intermediate node with pre_actions for immediate TTS
-        booking_status_text = "Creazione della prenotazione con tutti i dettagli forniti. Attendi..."
+        # Speak TTS filler directly to TTS processor, then perform booking inline
+        from pipecat.frames.frames import TTSSpeakFrame
+        tts_service = flow_manager.state.get("tts_service")
+        if tts_service:
+            await tts_service.queue_frame(TTSSpeakFrame("Creazione della prenotazione con tutti i dettagli forniti. Attendi..."))
 
-        from flows.nodes.patient_details import create_booking_processing_node
-        return {
-            "success": True,
-            "message": "Starting booking creation"
-        }, create_booking_processing_node(booking_status_text)
+        return await perform_booking_creation_and_transition(args, flow_manager)
 
     except Exception as e:
         logger.error(f"❌ Booking creation initialization error: {e}")
@@ -485,13 +484,18 @@ async def perform_booking_creation_and_transition(args: FlowArgs, flow_manager: 
 
         logger.info(f"📝 Creating final booking with data: {booking_data}")
 
-        # Create the booking with retry logic
-        booking_response, booking_error = retry_api_call(
-            api_func=create_booking,
-            max_retries=2,
-            retry_delay=1.0,
-            func_name="Booking Creation API",
-            booking_data=booking_data
+        # Create the booking with retry in executor to avoid blocking event loop (lets TTS filler play)
+        import asyncio
+        loop = asyncio.get_event_loop()
+        booking_response, booking_error = await loop.run_in_executor(
+            None,
+            lambda: retry_api_call(
+                api_func=create_booking,
+                max_retries=2,
+                retry_delay=1.0,
+                func_name="Booking Creation API",
+                booking_data=booking_data
+            )
         )
 
         # Handle API failure after all retries

@@ -26,13 +26,13 @@ from pipecat.turns.user_mute.base_user_mute_strategy import BaseUserMuteStrategy
 # Processing nodes — always mute, no user input allowed for entire node lifetime.
 # Closes the timing gap between tts_say queue and BotStartedSpeakingFrame.
 PROCESSING_NODES = {
-    "search_processing",                   # Health service search
-    "slot_search_processing",              # Slot search API
-    "slot_booking_processing",             # Slot booking API
+    # search_processing removed — consolidated into inline handler
+    # slot_search_processing removed — consolidated into inline handler
+    # slot_booking_processing removed — consolidated into inline handler
     "silent_center_search_processing",     # Silent center search + flow generation
-    "center_search_processing",            # Center search API
-    "automatic_slot_search",               # Auto slot search for 2nd+ services
-    "booking_processing",                  # Final booking creation API
+    # center_search_processing removed — consolidated into inline handler (pilot)
+    # automatic_slot_search removed — consolidated into inline handler
+    # booking_processing removed — consolidated into inline handler
     "final_center_search",                 # Search centers
     "slot_search",                         # Search slots
     "slot_refresh",                        # Refresh slots (respond_immediately)

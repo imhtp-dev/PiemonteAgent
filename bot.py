@@ -554,6 +554,9 @@ async def websocket_endpoint(websocket: WebSocket):
         # NOW create the real FlowManager with all parameters
         flow_manager = create_flow_manager(task, llm, context_aggregator, transport)
 
+        # Store TTS service ref for direct queue_frame in handlers (bypasses pipeline source)
+        flow_manager.state["tts_service"] = tts
+
         # Link node-aware mute strategy to flow state (must be after flow_manager creation)
         node_mute_strategy.set_flow_state(flow_manager.state)
 
