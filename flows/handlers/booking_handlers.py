@@ -964,6 +964,15 @@ async def search_slots_and_transition(args: FlowArgs, flow_manager: FlowManager)
         }, create_error_node("Slot search failed. Please try again.")
 
 
+async def retry_slot_selection_handler(flow_manager, args):
+    """Go back to slot search from booking_error, preserving patient/center state"""
+    logger.info("🔄 Retrying slot selection from booking_error — clearing slot state only")
+    for key in ["available_slots", "cached_all_slots", "cached_search_params",
+                "slot_cache", "selected_slot", "first_available_mode"]:
+        flow_manager.state.pop(key, None)
+    return await perform_slot_search_and_transition(args, flow_manager)
+
+
 async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
     """Perform the actual slot search after TTS message"""
     try:
@@ -1331,7 +1340,12 @@ async def select_slot_and_book(args: FlowArgs, flow_manager: FlowManager) -> Tup
         # Fallback: try ALL dates in cache (user might not provide date)
         for d, data in slot_cache.items():
             if selected_time in data.get("parsed_by_time", {}):
-                selected_slot = data["parsed_by_time"][selected_time]['original']
+                candidate = data["parsed_by_time"][selected_time]['original']
+                # Verify PEA matches to avoid stale slots from different service
+                if providing_entity_availability_uuid and candidate.get("providing_entity_availability_uuid") != providing_entity_availability_uuid:
+                    logger.warning(f"⚠️ CACHE FALLBACK: Skipping {d} — PEA mismatch (cache={candidate.get('providing_entity_availability_uuid')}, expected={providing_entity_availability_uuid})")
+                    continue
+                selected_slot = candidate
                 logger.info(f"🎯 CACHE FALLBACK: Found {selected_time} on {d}")
                 break
 
@@ -1635,12 +1649,16 @@ async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: Flow
                 break
 
         if not slot_found_in_available:
-            logger.error(f"❌ WARNING: Selected slot NOT found in available_slots!")
-            logger.error(f"   This might be LLM hallucination!")
+            logger.error(f"❌ Selected slot NOT in available_slots — aborting to prevent stale booking")
             logger.error(f"   Available slots count: {len(available_slots)}")
+            logger.error(f"   Selected: start={start_time}, PEA={providing_entity_availability}")
             logger.error(f"   First 3 available slots:")
             for idx, avail_slot in enumerate(available_slots[:3]):
                 logger.error(f"      [{idx}] Start: {avail_slot.get('start_time')}, PEA: {avail_slot.get('providing_entity_availability_uuid')}")
+            from flows.nodes.completion import create_error_node
+            return {"status": "error", "error": "slot_not_in_available"}, create_error_node(
+                "Il turno selezionato non è più disponibile. Riproviamo con una nuova ricerca."
+            )
 
         logger.info("=" * 80)
         logger.info(f"📝 Proceeding with slot reservation: {start_slot} to {end_slot}")
@@ -1821,10 +1839,12 @@ async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: Flow
                         flow_manager.state["time_preference"] = "any"
 
                 # Clear slot-related state for next booking
+                logger.info("🧹 Clearing slot state for next service (available_slots, slot_cache, etc.)")
                 flow_manager.state.pop("available_slots", None)
                 flow_manager.state.pop("cached_all_slots", None)
                 flow_manager.state.pop("cached_search_params", None)
                 flow_manager.state.pop("first_available_mode", None)
+                flow_manager.state.pop("slot_cache", None)
 
                 # Speak TTS filler and search slots inline (no intermediate processing node)
                 just_booked_ordinal = current_group_index + 1
@@ -1877,7 +1897,7 @@ async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: Flow
                     for key in ["available_slots", "cached_all_slots", "cached_search_params",
                                 "first_available_mode", "booking_scenario", "service_groups",
                                 "current_group_index", "current_service_index",
-                                "pending_slot_search_params", "selected_slot"]:
+                                "pending_slot_search_params", "selected_slot", "slot_cache"]:
                         flow_manager.state.pop(key, None)
 
                     # Store search term for the handler to pick up

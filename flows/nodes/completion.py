@@ -9,7 +9,7 @@ from pipecat_flows import NodeConfig, FlowsFunctionSchema
 
 from models.requests import HealthService, HealthCenter
 from flows.handlers.service_handlers import search_health_services_and_transition
-from flows.handlers.booking_handlers import handle_booking_modification
+from flows.handlers.booking_handlers import handle_booking_modification, retry_slot_selection_handler
 from flows.handlers.agent_routing_handlers import transfer_from_booking_to_info_handler
 from config.settings import settings
 
@@ -24,13 +24,20 @@ def create_error_node(error_message: str) -> NodeConfig:
         }],
         task_messages=[{
             "role": "system",
-            "content": f"{error_message} I sincerely apologize for this inconvenience. Would you like to try booking again or search for a different service?"
+            "content": f"{error_message} I sincerely apologize for this inconvenience. Would you like to try a different time slot for the same service, or search for a different service entirely? Prefer retrying the slot selection unless the patient explicitly wants a different service."
         }],
         functions=[
             FlowsFunctionSchema(
+                name="retry_slot_selection",
+                handler=retry_slot_selection_handler,
+                description="Retry slot selection for the current service without re-collecting patient info",
+                properties={},
+                required=[]
+            ),
+            FlowsFunctionSchema(
                 name="search_health_services",
                 handler=search_health_services_and_transition,
-                description="Restart the booking process",
+                description="Restart booking with a completely different service",
                 properties={
                     "search_term": {
                         "type": "string",
