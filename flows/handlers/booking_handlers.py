@@ -902,7 +902,7 @@ async def update_date_and_search_slots(args: FlowArgs, flow_manager: FlowManager
             return {
                 "success": False,
                 "message": error_message
-            }, create_no_slots_node(preferred_date, flow_manager.state.get("time_preference", "any time"), has_booked_slots=has_booked, booked_slots_info=booked_info)
+            }, create_no_slots_node(preferred_date, flow_manager.state.get("time_preference", "any time"), has_booked_slots=has_booked, booked_slots_info=booked_info, service_name=current_service_name)
 
     except (ValueError, TypeError) as e:
         logger.error(f"Date parsing error: {e}")
@@ -1282,7 +1282,7 @@ async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowM
             return {
                 "success": False,
                 "message": error_message
-            }, create_no_slots_node(preferred_date, time_preference, first_appointment_date, is_automatic_search, has_booked_slots=has_booked, booked_slots_info=booked_info)
+            }, create_no_slots_node(preferred_date, time_preference, first_appointment_date, is_automatic_search, has_booked_slots=has_booked, booked_slots_info=booked_info, service_name=current_service_name)
 
     except Exception as e:
         logger.error(f"Slot search error: {e}")
@@ -2335,7 +2335,7 @@ async def search_different_date_handler(args: FlowArgs, flow_manager: FlowManage
             return {
                 "success": False,
                 "message": f"No available slots found on {new_date}"
-            }, create_no_slots_node(new_date, time_preference, has_booked_slots=has_booked, booked_slots_info=booked_info)
+            }, create_no_slots_node(new_date, time_preference, has_booked_slots=has_booked, booked_slots_info=booked_info, service_name=current_service_name)
 
     except Exception as e:
         logger.error(f"❌ Error searching different date: {e}")

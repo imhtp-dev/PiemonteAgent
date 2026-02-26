@@ -1068,7 +1068,7 @@ def create_slot_refresh_node(service_name: str) -> NodeConfig:
     )
 
 
-def create_no_slots_node(date: str, time_preference: str = "any time", first_appointment_date: str = None, is_automatic_search: bool = False, has_booked_slots: bool = False, booked_slots_info: str = "") -> NodeConfig:
+def create_no_slots_node(date: str, time_preference: str = "any time", first_appointment_date: str = None, is_automatic_search: bool = False, has_booked_slots: bool = False, booked_slots_info: str = "", service_name: str = "") -> NodeConfig:
     """Create node when no slots are available - with human-like alternative suggestions
 
     Args:
@@ -1078,6 +1078,7 @@ def create_no_slots_node(date: str, time_preference: str = "any time", first_app
         is_automatic_search: True if this is automatic search for 2nd+ service (user didn't choose the date)
         has_booked_slots: True if there are already-booked slots from previous services
         booked_slots_info: Human-readable summary of already-booked services
+        service_name: Name of the service being searched (to avoid LLM confusion in multi-service flows)
     """
 
     # Build constraint message for multi-service bookings
@@ -1093,17 +1094,22 @@ def create_no_slots_node(date: str, time_preference: str = "any time", first_app
     if booked_slots_info:
         booked_context = f"ALREADY RESERVED (mention this to the patient): {booked_slots_info}. "
 
+    # Service name context for LLM (prevents confusion in multi-service flows)
+    service_context = f" You are currently searching slots for: {service_name}." if service_name else ""
+
     # Different message tone for automatic search (2nd+ services) vs user-chosen date (1st service)
     if is_automatic_search and first_appointment_date:
         # For 2nd+ services: Don't apologize about the date since user didn't choose it
         # Mention the first appointment context and present alternatives naturally
-        no_slots_message = f"Dal momento che il tuo primo appuntamento è il {first_appointment_date}, ho cercato disponibilità per il secondo servizio. Vorresti che controllassi altre date disponibili? Posso verificare gli orari disponibili nei giorni successivi."
+        service_label = service_name or "il secondo servizio"
+        no_slots_message = f"Dal momento che il tuo primo appuntamento è il {first_appointment_date}, ho cercato disponibilità per {service_label}. Vorresti che controllassi altre date disponibili? Posso verificare gli orari disponibili nei giorni successivi."
     else:
         # For 1st service or user-chosen dates: Keep original apologetic tone
+        service_label = service_name or "the requested service"
         if time_preference == "any time":
-            no_slots_message = f"I'm sorry, there are no available slots for {date}.{date_constraint_msg} I'd like to suggest some alternatives: would you like to try a different date? I can check if there are available slots on nearby dates."
+            no_slots_message = f"I'm sorry, there are no available slots for {service_label} on {date}.{date_constraint_msg} I'd like to suggest some alternatives: would you like to try a different date? I can check if there are available slots on nearby dates."
         else:
-            no_slots_message = f"I'm sorry, there are no available slots for {date} for {time_preference}.{date_constraint_msg} I'd like to suggest some alternatives: would you like to try a different date or time? For example, we might have available slots for {date} at a different time or on another date."
+            no_slots_message = f"I'm sorry, there are no available slots for {service_label} on {date} for {time_preference}.{date_constraint_msg} I'd like to suggest some alternatives: would you like to try a different date or time? For example, we might have available slots for {date} at a different time or on another date."
 
     # Build skip instruction for multi-service bookings
     skip_instruction = ""
@@ -1149,7 +1155,7 @@ def create_no_slots_node(date: str, time_preference: str = "any time", first_app
         name="no_slots_available",
         role_messages=[{
             "role": "system",
-            "content": f"{system_constraint_msg}{booked_context}We are in {settings.current_year}. When there are no available slots, be helpful and suggest alternatives in a human way. Offer to search for different dates or times.{skip_instruction} Never mention technical details or UUIDs. NEVER say the booking is confirmed or completed - the booking has NOT been finalized yet. {settings.language_config}"
+            "content": f"{system_constraint_msg}{booked_context}We are in {settings.current_year}.{service_context} When there are no available slots, be helpful and suggest alternatives in a human way. Offer to search for different dates or times.{skip_instruction} Never mention technical details or UUIDs. NEVER say the booking is confirmed or completed - the booking has NOT been finalized yet. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",
