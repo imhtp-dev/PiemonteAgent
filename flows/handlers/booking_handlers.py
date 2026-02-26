@@ -632,7 +632,19 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
             patient_dob = flow_manager.state.get("patient_dob", '1980-04-13')
             current_service_index = flow_manager.state.get("current_service_index", 0)
             current_service = selected_services[current_service_index] if selected_services else None
-            service_name = current_service.name if current_service else "il servizio"
+
+            # Get correct service name based on booking scenario (separate uses service_groups)
+            booking_scenario = flow_manager.state.get("booking_scenario", "legacy")
+            service_groups = flow_manager.state.get("service_groups", [])
+            if booking_scenario in ("separate", "bundle", "combined") and service_groups:
+                current_group_index = flow_manager.state.get("current_group_index", 0)
+                if current_group_index < len(service_groups):
+                    group_services = service_groups[current_group_index]["services"]
+                    service_name = " più ".join([svc.name for svc in group_services])
+                else:
+                    service_name = current_service.name if current_service else "il servizio"
+            else:
+                service_name = current_service.name if current_service else "il servizio"
 
             # CRITICAL: Set pending_slot_search_params for perform_slot_search_and_transition
             flow_manager.state["pending_slot_search_params"] = {
