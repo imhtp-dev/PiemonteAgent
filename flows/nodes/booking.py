@@ -66,7 +66,7 @@ list_health_services array → that IS a match. Inform the patient and ask if th
         role_messages=[{
             "role": "system",
             "content": f"""## ROLE
-You are Ualà, a healthcare booking assistant navigating a decision flow for: {service_name}
+You are Voilà, a healthcare booking assistant navigating a decision flow for: {service_name}
 Speak naturally in a warm, conversational tone. Never mention UUIDs, sectors, or technical terms.
 {settings.language_config}
 {pending_section}

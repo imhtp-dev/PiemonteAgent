@@ -19,6 +19,39 @@ FALLBACK_HC_UUID = "c5535638-6c18-444c-955d-89139d8276be"
 SILENT_RADIUS_STEPS = [None, 42, 62]  # None = API default 22km
 
 
+def prune_empty_flow_nodes(node: dict) -> dict:
+    """Remove nodes with empty list_health_services from flow tree.
+
+    If a node has list_health_services: [] → collapse it to the nearest
+    terminal node (save_cart action) following yes branch first, then no.
+    """
+    if not isinstance(node, dict):
+        return node
+
+    # Terminal node (has action) — keep as-is
+    if "action" in node:
+        return node
+
+    # Recursively prune yes/no children first
+    if "yes" in node:
+        node["yes"] = prune_empty_flow_nodes(node["yes"])
+    if "no" in node:
+        node["no"] = prune_empty_flow_nodes(node["no"])
+
+    # Check if THIS node has empty list_health_services
+    list_hs = node.get("list_health_services")
+    if list_hs is not None and list_hs == []:
+        msg = node.get("message", "unknown")
+        logger.info(f"✂️ Pruning empty flow node: '{msg[:60]}...'")
+        # Prefer yes branch (leads to save_cart faster), fallback to no
+        if "yes" in node:
+            return node["yes"]
+        elif "no" in node:
+            return node["no"]
+
+    return node
+
+
 async def perform_silent_center_search_and_generate_flow(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
     """Silent center search + flow generation in one step. No TTS, no user interaction."""
     try:
@@ -113,6 +146,16 @@ async def perform_silent_center_search_and_generate_flow(args: FlowArgs, flow_ma
         # Parse generated flow
         if isinstance(generated_flow, str):
             generated_flow = json.loads(generated_flow)
+
+        # Prune nested nodes with empty list_health_services before LLM sees them
+        generated_flow = prune_empty_flow_nodes(generated_flow)
+
+        # Print pruned flow to terminal
+        print(f"\n{'='*60}")
+        print(f"✂️ PRUNED FLOW for {primary_service.name}")
+        print(f"{'='*60}")
+        print(json.dumps(generated_flow, indent=4, ensure_ascii=False))
+        print(f"{'='*60}\n")
 
         # Check if list_health_services is empty → skip flow navigation
         list_hs = generated_flow.get("list_health_services", [])

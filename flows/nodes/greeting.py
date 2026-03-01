@@ -7,12 +7,13 @@ from flows.handlers.service_handlers import search_health_services_and_transitio
 from config.settings import settings
 
 
-def create_greeting_node(initial_booking_request: str = None, additional_service_request: str = None) -> NodeConfig:
+def create_greeting_node(initial_booking_request: str = None, additional_service_request: str = None, intent: str = None) -> NodeConfig:
     """Create the initial greeting node with automatic search trigger if coming from info agent
 
     Args:
         initial_booking_request: If provided, LLM will immediately search for this service
         additional_service_request: If provided, second service the patient also wants to book
+        intent: "price_inquiry" or None — controls the acknowledge message
     """
 
     # Build task message based on whether we have a pre-filled request
@@ -26,6 +27,13 @@ def create_greeting_node(initial_booking_request: str = None, additional_service
                 f'IMMEDIATELY call search_health_services with search_term="{initial_booking_request}".\n'
                 f'Do NOT ask the user what they want - they already told you. {settings.language_config}'
             )
+        elif intent == "price_inquiry":
+            acknowledge = (
+                f'The user wants to know the price of: "{initial_booking_request}"\n\n'
+                f'First say: "Per poterti dare il prezzo dovrò chiederti alcune informazioni."\n'
+                f'Then IMMEDIATELY call search_health_services with search_term="{initial_booking_request}".\n'
+                f'Do NOT ask the user what they want - they already told you. {settings.language_config}'
+            )
         else:
             acknowledge = (
                 f'The user has already requested to book: "{initial_booking_request}"\n\n'
@@ -36,7 +44,7 @@ def create_greeting_node(initial_booking_request: str = None, additional_service
             )
         task_content = acknowledge
     else:
-        task_content = f"""Say: 'Sono Ualà, assistente virtuale di Cerba HealthCare. Quale servizio vorresti prenotare?'
+        task_content = f"""Say: 'Sono Voilà, l\'assistente virtuale di Serba Healthcare. Posso fornirti informazioni su tutte le prestazioni offerte dai nostri centri. Se desideri prenotare, posso aiutarti per le prestazioni di poliambulatorio e radiologia. Dimmi pure'
 
 When the user mentions ANY service name, immediately call search_health_services to search for it. {settings.language_config}"""
 
@@ -44,7 +52,7 @@ When the user mentions ANY service name, immediately call search_health_services
         name="greeting",
         role_messages=[{
             "role": "system",
-            "content": f"You are Ualà, a calm and friendly virtual assistant (female voice) for Cerba Healthcare. Speak with warmth and clarity like a human, not like a robot. 🔇 SILENT FUNCTION CALLS: When calling search_health_services, call it IMMEDIATELY with NO preceding text. Do NOT say 'Cerco', 'Un momento', 'Let me search' or similar — the system handles status messages automatically. {settings.language_config}"
+            "content": f"You are Voilà, a calm and friendly virtual assistant (female voice) for Serba Healthcare. Speak with warmth and clarity like a human, not like a robot. 🔇 SILENT FUNCTION CALLS: When calling search_health_services, call it IMMEDIATELY with NO preceding text. Do NOT say 'Cerco', 'Un momento', 'Let me search' or similar — the system handles status messages automatically. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",

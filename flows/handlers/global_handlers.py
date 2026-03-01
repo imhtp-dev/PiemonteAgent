@@ -563,7 +563,7 @@ async def global_check_service_price(
             "success": True,
             "service_request": service_request,
             "message": "Starting price inquiry"
-        }, create_greeting_node(initial_booking_request=service_request if service_request else None)
+        }, create_greeting_node(initial_booking_request=service_request if service_request else None, intent="price_inquiry")
 
     except Exception as e:
         logger.error(f"❌ Check service price error: {e}")

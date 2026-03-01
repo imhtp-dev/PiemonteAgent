@@ -56,7 +56,7 @@ class TranscriptManager:
         )
 
         self.conversation_log.append(message)
-        logger.debug(f"📝 Added {role} message: {content[:100]}{'...' if len(content) > 100 else ''}")
+        logger.debug(f"📝 Added {role} message: {content}")
 
     def add_user_message(self, content: str) -> None:
         """Add a user message to transcript"""

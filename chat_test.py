@@ -174,7 +174,7 @@ class TextOutputProcessor(FrameProcessor):
                     "type": "assistant_message_complete",
                     "text": self._buffer
                 })
-                logger.info(f"✅ Complete message sent: {self._buffer[:100]}...")
+                logger.info(f"✅ Complete message sent: {self._buffer}")
 
                 # Record assistant message in transcript_manager (for booking agent)
                 from services.transcript_manager import get_transcript_manager
