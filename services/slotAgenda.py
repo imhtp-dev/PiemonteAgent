@@ -37,7 +37,7 @@ def get_token():
 
 
 @trace_sync_call("api.slot_search")
-def list_slot(health_center_uuid, date_search, uuid_exam, gender='m', date_of_birth='1980-04-13', start_time=None, end_time=None):
+def list_slot(health_center_uuid, date_search, uuid_exam, gender='m', date_of_birth='1980-04-13', start_time=None, end_time=None, providing_entity=None):
     # Add search params to span for debugging
     add_span_attributes({
         "slot.center_uuid": health_center_uuid,
@@ -64,8 +64,11 @@ def list_slot(health_center_uuid, date_search, uuid_exam, gender='m', date_of_bi
         'start_date': date_search, # Date of appointment
         'start_time': start_time, # 2025-09-12 09:00:00+00
         'end_time': end_time, # 2025-09-12 10:00:00+00
-        'availabilities_limit': 3
+        'availabilities_limit': 5 if providing_entity else 3
     }
+
+    if providing_entity:
+        request_data['providing_entity'] = providing_entity
 
     logger.info(f'🔍 SLOT API REQUEST: Making API request to: {api_url}')
     logger.info(f'🔍 SLOT API REQUEST: Request params: {request_data}')

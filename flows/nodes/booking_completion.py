@@ -11,7 +11,7 @@ from flows.handlers.service_handlers import search_health_services_and_transitio
 from config.settings import settings
 
 
-def create_booking_success_final_node(booking_info: Dict, selected_services: List, booked_slots: List[Dict]) -> NodeConfig:
+def create_booking_success_final_node(booking_info: Dict, selected_services: List, booked_slots: List[Dict], doctor_name: str = "") -> NodeConfig:
     """Create final booking success node with complete booking details"""
 
     # Format booking details
@@ -71,10 +71,12 @@ def create_booking_success_final_node(booking_info: Dict, selected_services: Lis
     else:
         created_date = datetime.now().strftime("%d %B %Y at %-H:%M")
 
+    doctor_section = f"\n**Doctor:** Dottor {doctor_name}" if doctor_name else ""
+
     task_content = f"""🎉 Excellent! Your booking has been created successfully!
 
 **Your Appointments:**
-{chr(10).join(slots_details)}
+{chr(10).join(slots_details)}{doctor_section}
 
 **Total Cost: {float(total_price):.2f} euro**
 

@@ -9,6 +9,14 @@ from pipecat_flows import FlowManager, NodeConfig, FlowArgs
 from services.call_logger import call_logger
 
 
+def _get_doctor_display_name(flow_manager: FlowManager) -> str:
+    """Get selected doctor's display name from state, or empty string."""
+    doctor = flow_manager.state.get("selected_providing_entity")
+    if not doctor:
+        return ""
+    prof = doctor.get("professional", {})
+    return f"{prof.get('name', '')} {prof.get('surname', '')}".strip()
+
 
 async def collect_first_name_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
     """Collect patient first name and transition to surname collection"""
@@ -520,7 +528,7 @@ async def perform_booking_creation_and_transition(args: FlowArgs, flow_manager: 
                 "booking_code": booking_response["booking"].get("code", ""),
                 "booking_uuid": booking_response["booking"].get("uuid", ""),
                 "message": "Booking created successfully"
-            }, create_booking_success_final_node(booking_response["booking"], selected_services, booked_slots)
+            }, create_booking_success_final_node(booking_response["booking"], selected_services, booked_slots, doctor_name=_get_doctor_display_name(flow_manager))
         else:
             # Booking failed
             error_msg = booking_response.get("message", "Booking creation failed")

@@ -18,6 +18,15 @@ from services.llm_interpretation import interpret_sorting_scenario
 from config.settings import settings
 
 
+def _get_doctor_display_name(flow_manager: FlowManager) -> str:
+    """Get selected doctor's display name from state, or empty string if not doctor-specific."""
+    doctor = flow_manager.state.get("selected_providing_entity")
+    if not doctor:
+        return ""
+    prof = doctor.get("professional", {})
+    return f"{prof.get('name', '')} {prof.get('surname', '')}".strip()
+
+
 def _build_booked_slots_summary(flow_manager: FlowManager) -> str:
     """Build human-readable summary of already-booked services for prompts."""
     booked_slots = flow_manager.state.get("booked_slots", [])
@@ -256,6 +265,30 @@ async def select_center_and_book(args: FlowArgs, flow_manager: FlowManager) -> T
     flow_manager.state["selected_center"] = selected_center
 
     logger.info(f"🏥 Center selected: {selected_center.name} in {selected_center.city}")
+
+    # ============================================================================
+    # DOCTOR-SPECIFIC BOOKING: Skip sorting API, go to datetime with doctor_specific scenario
+    # ============================================================================
+    if flow_manager.state.get("doctor_booking_mode"):
+        selected_services = flow_manager.state.get("selected_services", [])
+        first_service_name = selected_services[0].name if selected_services else "il servizio"
+        center_name = selected_center.name
+
+        flow_manager.state["booking_scenario"] = "doctor_specific"
+        doctor_name = flow_manager.state.get("requested_doctor_name", "")
+        logger.info(f"🩺 Doctor booking: skipping sorting API, going to datetime for {first_service_name}")
+
+        from flows.nodes.booking import create_collect_datetime_node
+        return {
+            "success": True,
+            "center_name": selected_center.name,
+            "center_city": selected_center.city,
+            "center_address": selected_center.address,
+            "doctor_booking_mode": True
+        }, create_collect_datetime_node(
+            first_service_name, False, center_name,
+            pre_tts_text=f"Cerco la disponibilità con il Dottor {doctor_name} presso {center_name}. Quando vorresti l'appuntamento?"
+        )
 
     # ============================================================================
     # PRICE INQUIRY: Skip sorting API + datetime, auto-search with tomorrow's date
@@ -589,7 +622,7 @@ async def check_cerba_membership_and_transition(args: FlowArgs, flow_manager: Fl
         "success": True,
         "is_cerba_member": is_member,
         "membership_status": "member" if is_member else "non-member"
-    }, create_booking_summary_confirmation_node(selected_services, booked_slots, selected_center, total_cost, is_member)
+    }, create_booking_summary_confirmation_node(selected_services, booked_slots, selected_center, total_cost, is_member, doctor_name=_get_doctor_display_name(flow_manager))
 
 
 
@@ -660,6 +693,14 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
                 "current_service": current_service
             }
             logger.info(f"✅ Set pending_slot_search_params for first available mode")
+
+            # Doctor-specific booking: fetch doctors even in first available mode
+            if flow_manager.state.get("doctor_booking_mode"):
+                tts_service = flow_manager.state.get("tts_service")
+                if tts_service:
+                    doctor_name = flow_manager.state.get("requested_doctor_name", "")
+                    await tts_service.queue_frame(TTSSpeakFrame(f"Cerco la prima disponibilità con il Dottor {doctor_name}. Attendi un momento."))
+                return await fetch_doctors_and_match(args, flow_manager)
 
             tts_service = flow_manager.state.get("tts_service")
             if tts_service:
@@ -746,6 +787,14 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
             "current_service": current_service
         }
         logger.info(f"✅ Set pending_slot_search_params for date: {preferred_date}, time_pref: {time_pref}")
+
+        # Doctor-specific booking: fetch doctors and match instead of direct slot search
+        if flow_manager.state.get("doctor_booking_mode"):
+            tts_service = flow_manager.state.get("tts_service")
+            if tts_service:
+                doctor_name = flow_manager.state.get("requested_doctor_name", "")
+                await tts_service.queue_frame(TTSSpeakFrame(f"Verifico la disponibilità del Dottor {doctor_name}. Attendi un momento."))
+            return await fetch_doctors_and_match(args, flow_manager)
 
         tts_service = flow_manager.state.get("tts_service")
         if tts_service:
@@ -852,6 +901,13 @@ async def update_date_and_search_slots(args: FlowArgs, flow_manager: FlowManager
         # Call list_slot in executor to avoid blocking event loop
         import asyncio
         loop = asyncio.get_event_loop()
+
+        # Include providing_entity filter for doctor-specific booking
+        slot_extra = {}
+        pe_uuid = flow_manager.state.get("providing_entity_uuid")
+        if pe_uuid:
+            slot_extra["providing_entity"] = pe_uuid
+
         slots_response = await loop.run_in_executor(
             None,
             lambda: list_slot(
@@ -861,7 +917,8 @@ async def update_date_and_search_slots(args: FlowArgs, flow_manager: FlowManager
                 gender=patient_gender,
                 date_of_birth=dob_formatted,
                 start_time=start_time,
-                end_time=end_time
+                end_time=end_time,
+                **slot_extra
             )
         )
 
@@ -1083,6 +1140,22 @@ async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowM
                 logger.info(f"   [{idx+1}] {svc.name} (UUID: {svc.uuid})")
             logger.info(f"   UUID list for API: {uuid_exam}")
 
+        elif booking_scenario == "doctor_specific":
+            # Doctor-specific booking: single service, filtered by providing_entity
+            logger.info("🩺 DOCTOR-SPECIFIC SCENARIO: Using selected service with providing_entity filter")
+
+            if not selected_services or len(selected_services) == 0:
+                logger.error("❌ Doctor-specific mode but no selected_services found!")
+                raise ValueError("No services available for booking")
+
+            current_service = selected_services[current_service_index]
+            uuid_exam = [current_service.uuid]
+            current_service_name = current_service.name
+
+            logger.info(f"   Service: {current_service.name}")
+            logger.info(f"   UUID: {current_service.uuid}")
+            logger.info(f"   Providing entity: {params.get('providing_entity', 'N/A')}")
+
         else:  # legacy fallback
             # Legacy mode: Use original selected_services approach (pre-sorting API)
             logger.info("🔄 LEGACY SCENARIO: Using original selected_services")
@@ -1114,6 +1187,21 @@ async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowM
 
         import asyncio
         loop = asyncio.get_event_loop()
+        # Build slot search kwargs (include providing_entity if doctor-specific)
+        slot_kwargs = dict(
+            health_center_uuid=selected_center.uuid,
+            date_search=preferred_date,
+            uuid_exam=uuid_exam,
+            gender=patient_gender,
+            date_of_birth=dob_formatted,
+            start_time=start_time,
+            end_time=end_time
+        )
+        providing_entity = params.get("providing_entity")
+        if providing_entity:
+            slot_kwargs["providing_entity"] = providing_entity
+            logger.info(f"🩺 Filtering slots by providing_entity: {providing_entity}")
+
         slots_response, slot_error = await loop.run_in_executor(
             None,
             lambda: retry_api_call(
@@ -1121,13 +1209,7 @@ async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowM
                 max_retries=2,
                 retry_delay=1.0,
                 func_name="Slot Search API",
-                health_center_uuid=selected_center.uuid,
-                date_search=preferred_date,
-                uuid_exam=uuid_exam,
-                gender=patient_gender,
-                date_of_birth=dob_formatted,
-                start_time=start_time,
-                end_time=end_time
+                **slot_kwargs
             )
         )
 
@@ -1608,7 +1690,7 @@ async def _proceed_to_cerba_or_summary(flow_manager, slot_uuid) -> Tuple[Dict[st
             "all_slots_created": True,
             "total_slots": len(booked_slots),
             "message": "Perfect! Your time slot has been reserved."
-        }, create_booking_summary_confirmation_node(selected_services, booked_slots, selected_center, total_cost, False)
+        }, create_booking_summary_confirmation_node(selected_services, booked_slots, selected_center, total_cost, False, doctor_name=_get_doctor_display_name(flow_manager))
 
 
 async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
@@ -2417,7 +2499,7 @@ async def skip_current_service_handler(args: FlowArgs, flow_manager: FlowManager
                     "booked_count": len(booked_slots),
                     "message": f"Skipped {skipped_service}. Proceeding with {len(booked_slots)} booked service(s)."
                 }, create_booking_summary_confirmation_node(
-                    selected_services, booked_slots, selected_center, total_cost, flow_manager.state.get("is_cerba_member", False)
+                    selected_services, booked_slots, selected_center, total_cost, flow_manager.state.get("is_cerba_member", False), doctor_name=_get_doctor_display_name(flow_manager)
                 )
         else:
             # No services booked at all - end conversation gracefully
@@ -2436,3 +2518,288 @@ async def skip_current_service_handler(args: FlowArgs, flow_manager: FlowManager
             "success": False,
             "message": "An error occurred"
         }, create_error_node("Si è verificato un errore. Riprova più tardi.")
+
+
+# ============================================================================
+# DOCTOR-SPECIFIC BOOKING HANDLERS
+# ============================================================================
+
+def _fuzzy_match_doctor(requested_name: str, doctors: List[Dict]) -> List[Dict]:
+    """Fuzzy match requested doctor name against providing-entity results.
+
+    For each doctor, compute max score across name, surname, and full name.
+    Returns doctors with score >= 80, sorted by score descending.
+    """
+    from rapidfuzz import fuzz
+
+    results = []
+    requested_lower = requested_name.lower().strip()
+
+    for doc in doctors:
+        prof = doc.get("professional", {})
+        first_name = (prof.get("name") or "").lower()
+        surname = (prof.get("surname") or "").lower()
+        full_name = f"{first_name} {surname}".strip()
+
+        # Compute score against all three variants
+        scores = [
+            fuzz.partial_ratio(requested_lower, first_name),
+            fuzz.partial_ratio(requested_lower, surname),
+            fuzz.partial_ratio(requested_lower, full_name),
+        ]
+        max_score = max(scores)
+
+        if max_score >= 80:
+            results.append({**doc, "score": max_score})
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results
+
+
+async def fetch_doctors_and_match(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
+    """After datetime collected in doctor mode: call providing-entity API, fuzzy match, transition."""
+    try:
+        selected_center = flow_manager.state.get("selected_center")
+        selected_services = flow_manager.state.get("selected_services", [])
+        preferred_date = flow_manager.state.get("preferred_date")
+        patient_gender = flow_manager.state.get("patient_gender", "m")
+        patient_dob = flow_manager.state.get("patient_dob", "")
+        requested_name = flow_manager.state.get("requested_doctor_name", "")
+
+        dob_formatted = patient_dob.replace("-", "") if patient_dob else "19900811"
+        service_uuids = [s.uuid for s in selected_services]
+
+        logger.info(f"🩺 Fetching providing entities for doctor '{requested_name}' at {selected_center.name}")
+
+        import asyncio
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            result, error = retry_api_call(
+                api_func=cerba_api.get_providing_entities,
+                max_retries=2,
+                retry_delay=1.0,
+                func_name="Providing Entity API",
+                health_center_uuid=selected_center.uuid,
+                health_services=service_uuids,
+                gender=patient_gender,
+                date_of_birth=dob_formatted,
+                start_date=preferred_date
+            )
+            if error:
+                raise error
+            return result
+
+        providing_entities = await loop.run_in_executor(None, _fetch)
+
+        flow_manager.state["providing_entities"] = providing_entities
+        logger.info(f"🩺 Got {len(providing_entities)} providing entities")
+
+        print(f"\n{'='*60}")
+        print(f"🩺 PROVIDING ENTITIES for '{requested_name}' at {selected_center.name}")
+        print(f"{'='*60}")
+        for i, pe in enumerate(providing_entities, 1):
+            prof = pe.get("professional", {})
+            print(f"  {i}. {prof.get('name', '')} {prof.get('surname', '')} (UUID: {pe.get('uuid', 'N/A')})")
+        print(f"{'='*60}\n")
+
+        if not providing_entities:
+            # No doctors at all for this date → let patient try different date or drop doctor preference
+            logger.warning("🩺 No providing entities returned for this date")
+            from flows.nodes.doctor_selection import create_no_doctors_for_date_node
+            return {
+                "success": False,
+                "message": "No doctors available at this center for this date"
+            }, create_no_doctors_for_date_node(requested_name)
+
+        # Fuzzy match
+        matched = _fuzzy_match_doctor(requested_name, providing_entities)
+        logger.info(f"🩺 Fuzzy matched {len(matched)} doctors for '{requested_name}'")
+
+        if len(matched) == 1:
+            # Exactly one match → auto-select, search slots
+            doctor = matched[0]
+            prof = doctor["professional"]
+            logger.info(f"🩺 Auto-selected: {prof['name']} {prof['surname']} (score={doctor['score']})")
+
+            flow_manager.state["selected_providing_entity"] = doctor
+            flow_manager.state["providing_entity_uuid"] = doctor["uuid"]
+
+            # Set pending params and search slots with providing_entity filter
+            return await _search_slots_with_doctor(flow_manager)
+
+        elif len(matched) > 1:
+            # Multiple matches → show selection node
+            logger.info(f"🩺 Multiple matches, presenting to patient")
+            from flows.nodes.doctor_selection import create_doctor_selection_node
+            return {
+                "success": True,
+                "matched_count": len(matched),
+                "message": "Multiple doctors matched"
+            }, create_doctor_selection_node(matched, requested_name)
+
+        else:
+            # No fuzzy match ≥80 → doctor not available
+            logger.info(f"🩺 No match for '{requested_name}', showing alternatives")
+            from flows.nodes.doctor_selection import create_doctor_not_available_node
+            top_alternatives = providing_entities[:3]
+            return {
+                "success": False,
+                "message": f"Doctor {requested_name} not found"
+            }, create_doctor_not_available_node(requested_name, top_alternatives)
+
+    except Exception as e:
+        logger.error(f"❌ Doctor matching error: {e}")
+        from flows.nodes.transfer import create_transfer_node_with_escalation
+        return {
+            "success": False,
+            "error": str(e)
+        }, await create_transfer_node_with_escalation(flow_manager)
+
+
+async def _search_slots_with_doctor(flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
+    """Search slots filtered by providing_entity and transition to slot selection."""
+    selected_center = flow_manager.state.get("selected_center")
+    selected_services = flow_manager.state.get("selected_services", [])
+    preferred_date = flow_manager.state.get("preferred_date")
+    patient_gender = flow_manager.state.get("patient_gender", "m")
+    patient_dob = flow_manager.state.get("patient_dob", "")
+    providing_entity_uuid = flow_manager.state.get("providing_entity_uuid")
+    current_service_index = flow_manager.state.get("current_service_index", 0)
+    current_service = selected_services[current_service_index] if selected_services else None
+
+    # Set pending_slot_search_params (used by perform_slot_search_and_transition)
+    flow_manager.state["pending_slot_search_params"] = {
+        "selected_center": selected_center,
+        "selected_services": selected_services,
+        "preferred_date": preferred_date,
+        "start_time": flow_manager.state.get("start_time"),
+        "end_time": flow_manager.state.get("end_time"),
+        "time_preference": flow_manager.state.get("time_preference", "any time"),
+        "patient_gender": patient_gender,
+        "patient_dob": patient_dob,
+        "current_service_index": current_service_index,
+        "current_service": current_service,
+        "providing_entity": providing_entity_uuid  # New: filter by doctor
+    }
+
+    tts_service = flow_manager.state.get("tts_service")
+    if tts_service:
+        doctor = flow_manager.state.get("selected_providing_entity", {})
+        prof = doctor.get("professional", {})
+        doctor_display = f"{prof.get('name', '')} {prof.get('surname', '')}".strip()
+        await tts_service.queue_frame(TTSSpeakFrame(f"Cerco gli appuntamenti con il Dottor {doctor_display}. Attendi un momento."))
+
+    # Delegate to existing slot search (which will use providing_entity from params)
+    return await perform_slot_search_and_transition({}, flow_manager)
+
+
+async def select_doctor_and_search_slots(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
+    """After patient selects a doctor from the list, search slots with that doctor."""
+    doctor_uuid = args.get("doctor_uuid", "").strip()
+    if not doctor_uuid:
+        return {"success": False, "message": "Please select a doctor"}, None
+
+    # Find selected doctor
+    providing_entities = flow_manager.state.get("providing_entities", [])
+    selected_doctor = None
+    for doc in providing_entities:
+        if doc["uuid"] == doctor_uuid:
+            selected_doctor = doc
+            break
+
+    if not selected_doctor:
+        return {"success": False, "message": "Doctor not found"}, None
+
+    prof = selected_doctor["professional"]
+    logger.info(f"🩺 Patient selected: {prof['name']} {prof['surname']} ({doctor_uuid})")
+
+    flow_manager.state["selected_providing_entity"] = selected_doctor
+    flow_manager.state["providing_entity_uuid"] = doctor_uuid
+
+    return await _search_slots_with_doctor(flow_manager)
+
+
+async def handle_try_different_date_for_doctor(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
+    """Patient wants to try a different date for the same doctor."""
+    preferred_date = (args.get("preferred_date") or "").strip()
+
+    # If patient already mentioned a date, skip the datetime node entirely
+    if preferred_date:
+        logger.info(f"📅 Patient provided date with retry: {preferred_date}, searching directly")
+        return await collect_datetime_and_transition(
+            {"preferred_date": preferred_date, "time_preference": "any"},
+            flow_manager
+        )
+
+    selected_services = flow_manager.state.get("selected_services", [])
+    first_service_name = selected_services[0].name if selected_services else "il servizio"
+    selected_center = flow_manager.state.get("selected_center")
+    center_display = selected_center.name if hasattr(selected_center, 'name') else str(selected_center)
+    doctor_name = flow_manager.state.get("requested_doctor_name", "")
+
+    from flows.nodes.booking import create_collect_datetime_node
+    return {
+        "success": True,
+        "message": "Trying different date"
+    }, create_collect_datetime_node(
+        first_service_name, False, center_display,
+        context_hint=f"No doctors were available for the previous date. The patient wants to try a different date for Dottor {doctor_name}. Ask them which date they'd like to try.",
+        skip_pre_tts=True
+    )
+
+
+async def handle_show_available_doctors(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
+    """Show all available doctors at this center for selection."""
+    providing_entities = flow_manager.state.get("providing_entities", [])
+    if providing_entities:
+        from flows.nodes.doctor_selection import create_doctor_selection_node
+        return {
+            "success": True,
+            "message": "Showing available doctors"
+        }, create_doctor_selection_node(
+            [{"score": 100, **doc} for doc in providing_entities[:5]],
+            flow_manager.state.get("requested_doctor_name", ""),
+            is_alternative=True
+        )
+    else:
+        from flows.nodes.transfer import create_transfer_node_with_escalation
+        return {"success": False}, await create_transfer_node_with_escalation(flow_manager)
+
+
+async def handle_book_without_doctor(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
+    """Drop doctor preference, continue booking with normal flow."""
+    preferred_date = (args.get("preferred_date") or "").strip()
+
+    # Clear doctor-specific state
+    flow_manager.state.pop("doctor_booking_mode", None)
+    flow_manager.state.pop("requested_doctor_name", None)
+    flow_manager.state.pop("providing_entity_uuid", None)
+    flow_manager.state.pop("selected_providing_entity", None)
+    flow_manager.state.pop("providing_entities", None)
+    flow_manager.state["booking_scenario"] = "legacy"
+
+    logger.info("🩺 Dropped doctor preference, continuing with normal booking flow")
+
+    # If patient already mentioned a date, skip datetime node entirely
+    if preferred_date:
+        logger.info(f"📅 Patient provided date with book_without_doctor: {preferred_date}, searching directly")
+        return await collect_datetime_and_transition(
+            {"preferred_date": preferred_date, "time_preference": "any"},
+            flow_manager
+        )
+
+    selected_services = flow_manager.state.get("selected_services", [])
+    first_service_name = selected_services[0].name if selected_services else "il servizio"
+    selected_center = flow_manager.state.get("selected_center")
+    center_display = selected_center.name if hasattr(selected_center, 'name') else str(selected_center)
+
+    from flows.nodes.booking import create_collect_datetime_node
+    return {
+        "success": True,
+        "message": "Continuing without doctor preference"
+    }, create_collect_datetime_node(
+        first_service_name, False, center_display,
+        context_hint="Doctor preference was removed. The patient wants to book without a specific doctor. Ask them which date they'd like.",
+        skip_pre_tts=True
+    )

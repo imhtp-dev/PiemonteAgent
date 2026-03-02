@@ -55,6 +55,12 @@ def prune_empty_flow_nodes(node: dict) -> dict:
 async def perform_silent_center_search_and_generate_flow(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
     """Silent center search + flow generation in one step. No TTS, no user interaction."""
     try:
+        # Doctor-specific booking: skip orange box entirely → go to center search
+        if flow_manager.state.get("doctor_booking_mode"):
+            logger.info("🩺 Doctor booking mode: skipping orange box, going to center search")
+            from flows.nodes.booking import create_final_center_search_node
+            return {"success": True, "message": "Skipped orange box for doctor-specific booking"}, create_final_center_search_node()
+
         selected_services = flow_manager.state.get("selected_services", [])
         if not selected_services:
             from flows.nodes.completion import create_error_node

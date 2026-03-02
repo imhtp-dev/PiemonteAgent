@@ -370,13 +370,16 @@ Do NOT say "finalizing booking" or proceed without calling the function. {settin
     )
 
 
-def create_collect_datetime_node(service_name: str = None, is_multi_service: bool = False, center_name: str = None) -> NodeConfig:
+def create_collect_datetime_node(service_name: str = None, is_multi_service: bool = False, center_name: str = None, context_hint: str = None, skip_pre_tts: bool = False, pre_tts_text: str = None) -> NodeConfig:
     """Create date and time collection node with LLM-driven natural language support
 
     Args:
         service_name: Optional service name to show in prompt (e.g., "Visita Ortopedica")
         is_multi_service: If True, says "next appointment", if False says "first appointment"
         center_name: Optional center name for context after RESET
+        context_hint: Optional context about what happened before (e.g., failed doctor search)
+        skip_pre_tts: If True, skip the "Ottimo!" TTS pre-action (used on retries)
+        pre_tts_text: Custom TTS text for pre_actions. Overrides default "Ottimo!" and skip_pre_tts.
     """
     # Get today's complete date information for LLM context
     today = datetime.now()
@@ -401,16 +404,20 @@ def create_collect_datetime_node(service_name: str = None, is_multi_service: boo
         booking_context += f"Booking service: {service_name}."
     if center_name:
         booking_context += f" Health center: {center_name}."
+    if context_hint:
+        booking_context += f"\n\n📋 CONTEXT: {context_hint}"
+
+    if pre_tts_text:
+        pre_actions = [{"type": "tts_say", "text": pre_tts_text}]
+    elif skip_pre_tts:
+        pre_actions = []
+    else:
+        pre_actions = [{"type": "tts_say", "text": "Ottimo! Ora fissiamo il tuo appuntamento."}]
 
     return NodeConfig(
         name=node_name,
         context_strategy=ContextStrategyConfig(strategy=ContextStrategy.RESET),
-        pre_actions=[
-            {
-                "type": "tts_say",
-                "text": "Ottimo! Ora fissiamo il tuo appuntamento."
-            }
-        ],
+        pre_actions=pre_actions,
         role_messages=[{
             "role": "system",
             "content": f"""{booking_context}
@@ -1166,7 +1173,7 @@ def create_no_slots_node(date: str, time_preference: str = "any time", first_app
 
 
 
-def create_booking_summary_confirmation_node(selected_services: List[HealthService], selected_slots: List[Dict], selected_center: HealthCenter, total_cost: float, is_cerba_member: bool = False) -> NodeConfig:
+def create_booking_summary_confirmation_node(selected_services: List[HealthService], selected_slots: List[Dict], selected_center: HealthCenter, total_cost: float, is_cerba_member: bool = False, doctor_name: str = "") -> NodeConfig:
     """Create booking summary confirmation node with all details before personal info collection"""
 
     # Use full center name directly
@@ -1251,13 +1258,15 @@ def create_booking_summary_confirmation_node(selected_services: List[HealthServi
     logger.info("=" * 80)
     membership_text = " (with Cerba Card discount)" if is_cerba_member else ""
 
+    doctor_section = f"\n\n**Doctor:** Dottor {doctor_name}" if doctor_name else ""
+
     summary_content = f"""Here's a summary of your booking:
 
 **Services:**
 {services_summary}
 
 **Health Center:**
-{selected_center.name}
+{selected_center.name}{doctor_section}
 
 **Total Cost:** {float(total_cost):.2f} euro{membership_text}{preparation_section}
 

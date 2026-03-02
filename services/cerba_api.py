@@ -200,6 +200,60 @@ class CerbaAPIService:
             logger.error(f"Failed to get health centers: {e}")
             raise CerbaAPIError(f"Failed to retrieve health centers: {str(e)}")
 
+    def get_providing_entities(
+        self,
+        health_center_uuid: str,
+        health_services: List[str],
+        gender: str,
+        date_of_birth: str,
+        start_date: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Get providing entities (doctors) with availability for requested services.
+
+        Args:
+            health_center_uuid: UUID of the health center
+            health_services: List of service UUIDs
+            gender: Patient gender ("m" or "f")
+            date_of_birth: Date in YYYYMMDD format
+            start_date: Date to search from (YYYY-MM-DD)
+
+        Returns:
+            List of providing entity dicts with uuid, name, professional {uuid, name, surname}
+        """
+        if not all([health_center_uuid, health_services, gender, date_of_birth, start_date]):
+            raise ValueError("Missing required parameters for providing-entity lookup")
+
+        if isinstance(health_services, list):
+            health_services_param = ",".join(health_services)
+        else:
+            health_services_param = health_services
+
+        params = {
+            "health_services": health_services_param,
+            "gender": gender,
+            "date_of_birth": date_of_birth,
+            "start_date": start_date
+        }
+
+        try:
+            endpoint = f"amb/health-center/{health_center_uuid}/providing-entity"
+            response = self._make_request(endpoint, params)
+
+            if isinstance(response, list):
+                logger.info(f"Found {len(response)} providing entities at center {health_center_uuid}")
+                return response
+            else:
+                logger.warning(f"Unexpected response format from providing-entity: {type(response)}")
+                return []
+
+        except CerbaAPIError as e:
+            logger.error(f"Failed to get providing entities: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error getting providing entities: {e}")
+            raise CerbaAPIError(f"Failed to get providing entities: {str(e)}")
+
     def search_patient_by_phone(self, phone: str) -> List[Dict[str, Any]]:
         """
         Search for patients by phone number using Cerba API

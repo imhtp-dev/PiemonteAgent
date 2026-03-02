@@ -159,7 +159,7 @@ GLOBAL_FUNCTIONS = [
     # 9. Start Booking (TRANSITIONS)
     FlowsFunctionSchema(
         name="start_booking",
-        description="Start appointment booking flow. If patient mentions TWO services (e.g. 'RX caviglia e RX avampiede'), set service_request to the FIRST and additional_service_request to the SECOND.",
+        description="Start appointment booking flow. If patient mentions TWO services (e.g. 'RX caviglia e RX avampiede'), set service_request to the FIRST and additional_service_request to the SECOND. If patient mentions a specific doctor name, include doctor_name.",
         properties={
             "service_request": {
                 "type": "string",
@@ -168,6 +168,10 @@ GLOBAL_FUNCTIONS = [
             "additional_service_request": {
                 "type": "string",
                 "description": "If patient mentions a second service to book, put it here. Only the raw service name text."
+            },
+            "doctor_name": {
+                "type": "string",
+                "description": "Doctor's name if patient requests a specific doctor (e.g., 'Rossi', 'Mario Rossi'). Strip titles like Dottor/Dottoressa/Dr."
             }
         },
         required=["service_request"],
