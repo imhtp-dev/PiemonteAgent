@@ -278,17 +278,7 @@ async def select_center_and_book(args: FlowArgs, flow_manager: FlowManager) -> T
         doctor_name = flow_manager.state.get("requested_doctor_name", "")
         logger.info(f"🩺 Doctor booking: skipping sorting API, going to datetime for {first_service_name}")
 
-        from flows.nodes.booking import create_collect_datetime_node
-        return {
-            "success": True,
-            "center_name": selected_center.name,
-            "center_city": selected_center.city,
-            "center_address": selected_center.address,
-            "doctor_booking_mode": True
-        }, create_collect_datetime_node(
-            first_service_name, False, center_name,
-            pre_tts_text=f"Cerco la disponibilità con il Dottor {doctor_name} presso {center_name}. Quando vorresti l'appuntamento?"
-        )
+        return await auto_search_first_available(flow_manager)
 
     # ============================================================================
     # PRICE INQUIRY: Skip sorting API + datetime, auto-search with tomorrow's date
@@ -556,14 +546,7 @@ async def select_center_and_book(args: FlowArgs, flow_manager: FlowManager) -> T
 
     center_name = selected_center.name
 
-    from flows.nodes.booking import create_collect_datetime_node
-    return {
-        "success": True,
-        "center_name": selected_center.name,
-        "center_city": selected_center.city,
-        "center_address": selected_center.address,
-        "sorting_api_called": True
-    }, create_collect_datetime_node(first_service_name, False, center_name)
+    return await auto_search_first_available(flow_manager)
 
 
 async def check_cerba_membership_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
@@ -624,6 +607,77 @@ async def check_cerba_membership_and_transition(args: FlowArgs, flow_manager: Fl
         "membership_status": "member" if is_member else "non-member"
     }, create_booking_summary_confirmation_node(selected_services, booked_slots, selected_center, total_cost, is_member, doctor_name=_get_doctor_display_name(flow_manager))
 
+
+
+async def auto_search_first_available(flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
+    """Auto-search for first available slot (tomorrow, any time).
+
+    Skips the datetime question entirely — searches immediately on entry.
+    Replicates the first_available_mode logic from collect_datetime_and_transition.
+    User can change date later via slot_selection_node's search_different_date handler.
+    """
+    italian_tz = ZoneInfo("Europe/Rome")
+    today = datetime.now(italian_tz)
+    tomorrow = today + timedelta(days=1)
+    preferred_date = tomorrow.strftime('%Y-%m-%d')
+
+    # Set state for first available mode
+    flow_manager.state["preferred_date"] = preferred_date
+    flow_manager.state["first_available_mode"] = True
+    flow_manager.state["start_time"] = None
+    flow_manager.state["end_time"] = None
+    flow_manager.state["time_preference"] = "any time"
+    flow_manager.state["preferred_time"] = "first available"
+    logger.info(f"🎯 AUTO FIRST AVAILABLE - searching from TOMORROW: {preferred_date}")
+
+    # Get required data from state
+    selected_services = flow_manager.state.get("selected_services", [])
+    selected_center = flow_manager.state.get("selected_center")
+    patient_gender = flow_manager.state.get("patient_gender", 'm')
+    patient_dob = flow_manager.state.get("patient_dob", '1980-04-13')
+    current_service_index = flow_manager.state.get("current_service_index", 0)
+    current_service = selected_services[current_service_index] if selected_services else None
+
+    # Get correct service name based on booking scenario
+    booking_scenario = flow_manager.state.get("booking_scenario", "legacy")
+    service_groups = flow_manager.state.get("service_groups", [])
+    if booking_scenario in ("separate", "bundle", "combined") and service_groups:
+        current_group_index = flow_manager.state.get("current_group_index", 0)
+        if current_group_index < len(service_groups):
+            group_services = service_groups[current_group_index]["services"]
+            service_name = " più ".join([svc.name for svc in group_services])
+        else:
+            service_name = current_service.name if current_service else "il servizio"
+    else:
+        service_name = current_service.name if current_service else "il servizio"
+
+    # Set pending_slot_search_params for perform_slot_search_and_transition
+    flow_manager.state["pending_slot_search_params"] = {
+        "selected_center": selected_center,
+        "selected_services": selected_services,
+        "preferred_date": preferred_date,
+        "start_time": None,
+        "end_time": None,
+        "time_preference": "any time",
+        "patient_gender": patient_gender,
+        "patient_dob": patient_dob,
+        "current_service_index": current_service_index,
+        "current_service": current_service
+    }
+
+    # Doctor-specific booking: fetch doctors
+    if flow_manager.state.get("doctor_booking_mode"):
+        tts_service = flow_manager.state.get("tts_service")
+        if tts_service:
+            doctor_name = flow_manager.state.get("requested_doctor_name", "")
+            await tts_service.queue_frame(TTSSpeakFrame(f"Cerco la prima disponibilità con il Dottor {doctor_name}. Attendi un momento."))
+        return await fetch_doctors_and_match({}, flow_manager)
+
+    # Normal booking: TTS filler + slot search
+    tts_service = flow_manager.state.get("tts_service")
+    if tts_service:
+        await tts_service.queue_frame(TTSSpeakFrame(f"Cerco subito la prima disponibilità per {service_name}. Attendi un momento."))
+    return await perform_slot_search_and_transition({}, flow_manager)
 
 
 async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
@@ -1960,18 +2014,7 @@ async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: Flow
                 logger.info(f"   Next service: {next_service.name}")
                 logger.info(f"   Remaining services: {len(selected_services) - current_service_index - 1}")
 
-                from flows.nodes.booking import create_collect_datetime_node
-                return {
-                    "success": True,
-                    "booking_id": slot_uuid,
-                    "service_name": selected_services[current_service_index].name,
-                    "has_more_services": True,
-                    "next_service": next_service.name,
-                    "remaining_services": len(selected_services) - current_service_index - 1
-                }, create_collect_datetime_node(
-                    next_service.name, True,
-                    flow_manager.state.get("selected_center").name if flow_manager.state.get("selected_center") else None
-                )
+                return await auto_search_first_available(flow_manager)
 
             else:
                 # All groups/services booked
@@ -2086,11 +2129,7 @@ async def handle_booking_modification(args: FlowArgs, flow_manager: FlowManager)
                     pass
             flow_manager.state["booked_slots"] = []
         
-        from flows.nodes.booking import create_collect_datetime_node
-        return {
-            "success": True,
-            "message": "Let's reschedule your appointment"
-        }, create_collect_datetime_node()
+        return await auto_search_first_available(flow_manager)
     
     else:
         return {"success": False, "message": "Please specify 'cancel' or 'change_time'"}, None
@@ -2200,13 +2239,9 @@ async def confirm_booking_summary_and_proceed(args: FlowArgs, flow_manager: Flow
                 slot_cache=flow_manager.state.setdefault("slot_cache", {})
             )
         else:
-            # Fallback: go back to date/time selection
-            logger.warning("⚠️ No available slots stored, going back to date selection")
-            from flows.nodes.booking import create_collect_datetime_node
-            return {
-                "success": False,
-                "message": "Let's choose a different date and time"
-            }, create_collect_datetime_node()
+            # Fallback: auto-search first available
+            logger.warning("⚠️ No available slots stored, auto-searching first available")
+            return await auto_search_first_available(flow_manager)
 
     else:
         return {"success": False, "message": "Please let me know if you want to proceed, cancel, or change the booking"}, None
@@ -2794,12 +2829,4 @@ async def handle_book_without_doctor(args: FlowArgs, flow_manager: FlowManager) 
     selected_center = flow_manager.state.get("selected_center")
     center_display = selected_center.name if hasattr(selected_center, 'name') else str(selected_center)
 
-    from flows.nodes.booking import create_collect_datetime_node
-    return {
-        "success": True,
-        "message": "Continuing without doctor preference"
-    }, create_collect_datetime_node(
-        first_service_name, False, center_display,
-        context_hint="Doctor preference was removed. The patient wants to book without a specific doctor. Ask them which date they'd like.",
-        skip_pre_tts=True
-    )
+    return await auto_search_first_available(flow_manager)

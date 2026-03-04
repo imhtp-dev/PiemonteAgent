@@ -272,12 +272,8 @@ async def perform_second_service_sorting_and_transition(args: FlowArgs, flow_man
             display_name = " più ".join([svc.name for svc in first_group_services])
             center_name = selected_center.name
 
-            from flows.nodes.booking import create_collect_datetime_node
-            return {
-                "success": True,
-                "center_name": center_name,
-                "sorting_api_called": True
-            }, create_collect_datetime_node(display_name, False, center_name)
+            from flows.handlers.booking_handlers import auto_search_first_available
+            return await auto_search_first_available(flow_manager)
 
         else:
             # Sorting API failed — center doesn't have this service, search new center

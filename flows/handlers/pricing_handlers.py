@@ -27,11 +27,8 @@ async def handle_proceed_to_booking(args: FlowArgs, flow_manager: FlowManager) -
     first_service_name = selected_services[0].name if selected_services else "your appointment"
     center_name = selected_center.name if selected_center else ""
 
-    from flows.nodes.booking import create_collect_datetime_node
-    return {
-        "success": True,
-        "message": "Proceeding to booking"
-    }, create_collect_datetime_node(first_service_name, False, center_name)
+    from flows.handlers.booking_handlers import auto_search_first_available
+    return await auto_search_first_available(flow_manager)
 
 
 async def handle_end_price_inquiry(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:

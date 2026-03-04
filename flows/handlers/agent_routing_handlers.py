@@ -76,11 +76,8 @@ async def transfer_from_booking_to_info_handler(
 
     if booking_in_progress and not booking_completed:
         logger.error(f"❌ BLOCKED: Cannot transfer during active booking")
-        from flows.nodes.booking import create_collect_datetime_node
-        return {
-            "error": "Cannot transfer during booking",
-            "message": "Please complete the booking first"
-        }, create_collect_datetime_node()
+        from flows.handlers.booking_handlers import auto_search_first_available
+        return await auto_search_first_available(flow_manager)
 
     logger.info(f"🟢➜🟠 Transferring from BOOKING to ROUTER | Question: {user_question}")
 

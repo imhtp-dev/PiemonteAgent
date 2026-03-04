@@ -632,9 +632,10 @@ def create_slot_selection_node(slots: List[Dict], service: HealthService, is_cer
 🕐 The most recent (earliest) appointment available is at {earliest_time}.
 
 IMPORTANT INSTRUCTIONS:
-1. Present only the FIRST 4-6 time slots to the user initially
-2. Mention the earliest time ({earliest_time}) as the most recent available
-3. After showing the first 4-6 slots, tell the user:"""
+1. ALWAYS mention the DATE first (e.g., "domani {formatted_date}" / "tomorrow {formatted_date}") before listing times — the patient must know WHICH DAY these slots are for
+2. Present only the FIRST 4-6 time slots to the user initially
+3. Mention the earliest time ({earliest_time}) as the most recent available
+4. After showing the first 4-6 slots, tell the user:"""
 
             if len(tomorrow_slots) > 6:
                 if len(morning_slots) > 0 and len(afternoon_slots) > 0:
@@ -681,8 +682,9 @@ Ask the user if any of the shown times work for them, or if they'd like to see m
 🕐 The most recent appointment available is at {earliest_time}.
 
 IMPORTANT INSTRUCTIONS:
-1. Present only the FIRST 4-6 time slots to the user initially
-2. After showing the first 4-6 slots, tell the user:"""
+1. ALWAYS mention the DATE first (e.g., "{formatted_date}") before listing times — the patient must know WHICH DAY these slots are for
+2. Present only the FIRST 4-6 time slots to the user initially
+3. After showing the first 4-6 slots, tell the user:"""
 
             if len(earliest_date_slots) > 6:
                 if len(morning_slots) > 0 and len(afternoon_slots) > 0:
@@ -894,10 +896,18 @@ Ask the user which time works best for them."""
     
     # NOTE: task_content and slot_context are already set by the smart filtering logic above
 
+    # Date context for LLM (prevents wrong-year hallucination)
+    from datetime import datetime as _dt
+    _today = _dt.now()
+    _today_str = _today.strftime("%Y-%m-%d")
+    _today_display = _today.strftime("%B %d, %Y")
+
     # Build role content based on mode: date selection vs time selection
     if slot_context.get('available_times'):
         # TIME SELECTION MODE — specific slots for a date
         role_content = f"""Help the patient select from available appointment slots for {service.name}.
+
+📅 TODAY'S DATE: {_today_display} (date: {_today_str}). Current year: {settings.current_year}. ALL dates must use the current year unless the patient explicitly says a different year.
 
 🎯 SLOT PRESENTATION: {slot_context['slot_count']} slots available.
 
@@ -926,6 +936,8 @@ Ask the user which time works best for them."""
     else:
         # DATE SELECTION MODE — patient needs to pick a date first
         role_content = f"""Help the patient choose an appointment date for {service.name}.
+
+📅 TODAY'S DATE: {_today_display} (date: {_today_str}). Current year: {settings.current_year}. ALL dates must use the current year unless the patient explicitly says a different year.
 
 You are in DATE SELECTION mode. The patient needs to pick a date first.
 Once they choose a date from the available list, call update_date_preference with that date in YYYY-MM-DD format.
