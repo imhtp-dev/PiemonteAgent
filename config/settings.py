@@ -58,17 +58,29 @@ class Settings:
             "language": os.getenv("AZURE_STT_LANGUAGE", "it-IT"),
             "sample_rate": 16000,
             "endpoint_id": os.getenv("AZURE_SPEECH_ENDPOINT_ID"),  # Optional custom model endpoint
-            # Phrase list for custom Italian healthcare keywords
-            # To test WITHOUT phrase list, set DISABLE_PHRASE_LIST=true in .env
-            "phrase_list": [] if os.getenv("DISABLE_PHRASE_LIST", "").lower() == "true" else [
-                "maschio",
-                "femmina",
-                "cerba healthcare",
-                "RX Cavigilia Destra"
-            ],
+            # Phrase list: base keywords + doctor names from data/doctor_names.json
+            # To disable, set DISABLE_PHRASE_LIST=true in .env
+            "phrase_list": [] if os.getenv("DISABLE_PHRASE_LIST", "").lower() == "true" else self._load_phrase_list(),
             "phrase_list_weight": 2  # Boost recognition confidence for these phrases
         }
     
+    def _load_phrase_list(self):
+        """Load base phrases + doctor names from data/doctor_names.json"""
+        base_phrases = ["maschio", "femmina", "cerba healthcare", "RX Cavigilia Destra"]
+        try:
+            import json
+            json_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "doctor_names.json")
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # Add full names (first + surname) for better recognition
+            for doc in data.get("doctors", []):
+                full = f"{doc['name']} {doc['surname']}"
+                base_phrases.append(full)
+            logger.info(f"🎯 Loaded {len(base_phrases)} phrases for Azure STT ({len(data.get('doctors', []))} doctors)")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not load doctor names for phrase list: {e}")
+        return base_phrases
+
     @property
     def elevenlabs_config(self) -> Dict[str, Any]:
         """ElevenLabs TTS configuration"""

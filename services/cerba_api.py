@@ -238,6 +238,11 @@ class CerbaAPIService:
 
         try:
             endpoint = f"amb/health-center/{health_center_uuid}/providing-entity"
+            print(f"\n{'='*60}")
+            print(f"🩺 PROVIDING-ENTITY API REQUEST")
+            print(f"  Endpoint: {endpoint}")
+            print(f"  Params: {params}")
+            print(f"{'='*60}\n")
             response = self._make_request(endpoint, params)
 
             if isinstance(response, list):

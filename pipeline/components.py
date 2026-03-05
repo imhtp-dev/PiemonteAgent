@@ -96,15 +96,48 @@ class AzureSTTServiceWithPhrases(AzureSTTService):
             logger.debug(f"❌ Full error: {traceback.format_exc()}")
 
     async def start(self, frame: StartFrame):
-        """Override start method to setup phrase list after recognizer creation"""
-        # Call parent start method first (this creates self._speech_recognizer)
-        await super().start(frame)
+        """Override start to inject phrase list BEFORE continuous recognition starts.
 
-        # Setup phrase list if speech recognizer exists
-        if hasattr(self, '_speech_recognizer') and self._speech_recognizer:
+        Parent's start() creates recognizer AND starts recognition in one go,
+        making it impossible to add phrases in between. We replicate the parent
+        logic with phrase list injection after recognizer creation but before
+        start_continuous_recognition_async().
+        """
+        # Call grandparent start (STTService), skip AzureSTTService.start()
+        from pipecat.services.stt_service import STTService
+        await STTService.start(self, frame)
+
+        if self._audio_stream:
+            return
+
+        try:
+            from azure.cognitiveservices.speech.audio import (
+                AudioStreamFormat,
+                PushAudioInputStream,
+                AudioConfig,
+            )
+            from azure.cognitiveservices.speech import SpeechRecognizer
+
+            stream_format = AudioStreamFormat(samples_per_second=self.sample_rate, channels=1)
+            self._audio_stream = PushAudioInputStream(stream_format)
+            audio_config = AudioConfig(stream=self._audio_stream)
+
+            self._speech_recognizer = SpeechRecognizer(
+                speech_config=self._speech_config, audio_config=audio_config
+            )
+
+            # Phrase list BEFORE starting recognition
             self._setup_phrase_list(self._speech_recognizer)
-        else:
-            logger.warning("⚠️ No speech recognizer found to setup phrase list")
+
+            self._speech_recognizer.recognizing.connect(self._on_handle_recognizing)
+            self._speech_recognizer.recognized.connect(self._on_handle_recognized)
+            self._speech_recognizer.start_continuous_recognition_async()
+
+            logger.success("✅ Azure STT started with phrase list injected before recognition")
+        except Exception as e:
+            await self.push_error(
+                error_msg=f"Uncaught exception during initialization: {e}", exception=e
+            )
 
 
 def create_stt_service() -> Union[DeepgramSTTService, "AzureSTTServiceWithPhrases"]:

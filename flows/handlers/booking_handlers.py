@@ -2057,11 +2057,15 @@ async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: Flow
             error_msg = f"Slot reservation failed: HTTP {status_code}"
             logger.error(error_msg)
 
-            # For status code errors, assume slot is no longer available
-            if status_code == 409:
-                # Slot no longer available - refresh slots
+            # Slot no longer available — Cerba returns 409 OR 500 with specific message
+            slot_gone = (
+                status_code == 409
+                or (status_code == 500 and "non è più disponibile" in str(slot_result))
+            )
+            if slot_gone:
                 current_service_name = selected_services[current_service_index].name
                 from flows.nodes.booking import create_slot_refresh_node
+                logger.warning(f"⚠️ Slot no longer available (HTTP {status_code}), refreshing slots")
                 return {
                     "success": False,
                     "message": f"Sorry, that time slot is no longer available for {current_service_name}. Let me show you updated available times.",
@@ -2830,3 +2834,20 @@ async def handle_book_without_doctor(args: FlowArgs, flow_manager: FlowManager) 
     center_display = selected_center.name if hasattr(selected_center, 'name') else str(selected_center)
 
     return await auto_search_first_available(flow_manager)
+
+
+async def handle_get_price_info(args: FlowArgs, flow_manager: FlowManager) -> Dict[str, Any]:
+    """Return price info with doctor names for all currently displayed slots.
+
+    Reads slot_price_info from state (built during slot parsing in create_slot_selection_node).
+    Returns structured data so LLM can answer range questions, specific price lookups,
+    and closest-match queries naturally.
+    """
+    slot_cache = flow_manager.state.get("slot_cache", {})
+    price_info = slot_cache.get("_price_info")
+    if not price_info:
+        logger.warning("No price info in slot_cache")
+        return {"success": False, "message": "Price information not available for current slots."}
+
+    logger.info(f"💰 Price info requested: {price_info}")
+    return {"success": True, **price_info}

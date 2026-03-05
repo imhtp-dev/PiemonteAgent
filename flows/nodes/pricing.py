@@ -18,42 +18,47 @@ def create_price_info_node(slots: List[Dict[str, Any]], service_name: str, cente
         service_name: Display name of the service
         center_name: Display name of the health center
     """
-    # Extract prices from first slot's health_services
-    price_lines = []
-    total_price = 0.0
-    total_cerba = 0.0
+    # Extract price range across ALL slots (different doctors = different prices)
+    all_prices = []
+    all_cerba_prices = []
 
-    if slots and slots[0].get("health_services"):
-        for hs in slots[0]["health_services"]:
-            name = hs.get("name", "")
+    for slot in slots:
+        for hs in slot.get("health_services", []):
             price = hs.get("price")
             cerba_price = hs.get("cerba_card_price")
-
-            price_str = f"€{price}" if price is not None else "N/A"
-            cerba_str = f"€{cerba_price}" if cerba_price is not None else "N/A"
-            price_lines.append(f"- {name}: {price_str} (con Cerba Card: {cerba_str})")
-
             if price is not None:
                 try:
-                    total_price += float(price)
+                    all_prices.append(float(price))
                 except (ValueError, TypeError):
                     pass
             if cerba_price is not None:
                 try:
-                    total_cerba += float(cerba_price)
+                    all_cerba_prices.append(float(cerba_price))
                 except (ValueError, TypeError):
                     pass
 
-    prices_text = "\n".join(price_lines) if price_lines else "- Price information not available"
+    # Build price range text
+    if all_prices:
+        min_price = min(all_prices)
+        max_price = max(all_prices)
+        if min_price == max_price:
+            price_range_text = f"The price for {service_name} is {min_price:.0f} euro."
+        else:
+            price_range_text = f"The price range for {service_name} is from {min_price:.0f} euro to {max_price:.0f} euro, depending on the doctor."
 
-    # Build total line only if multiple services
-    total_line = ""
-    if len(price_lines) > 1:
-        total_line = f"\nTotale: €{total_price:.2f} (con Cerba Card: €{total_cerba:.2f})"
+        # Add Cerba Card range if available
+        if all_cerba_prices:
+            min_cerba = min(all_cerba_prices)
+            max_cerba = max(all_cerba_prices)
+            if min_cerba == max_cerba:
+                price_range_text += f" With Cerba Card the price is {min_cerba:.0f} euro."
+            else:
+                price_range_text += f" With Cerba Card the price range is from {min_cerba:.0f} euro to {max_cerba:.0f} euro."
+    else:
+        price_range_text = "Price information is not available at this time."
 
     logger.info(f"💰 Price info node: {service_name} @ {center_name}")
-    for line in price_lines:
-        logger.info(f"   {line}")
+    logger.info(f"   Range: {min(all_prices) if all_prices else 'N/A'}-{max(all_prices) if all_prices else 'N/A'}€ ({len(slots)} slots)")
 
     return NodeConfig(
         name="price_info",
@@ -61,9 +66,9 @@ def create_price_info_node(slots: List[Dict[str, Any]], service_name: str, cente
             "role": "system",
             "content": f"""Present the price information to the patient for {service_name} at {center_name}.
 
-Prices:
-{prices_text}{total_line}
+{price_range_text}
 
+Speak naturally and conversationally. Do not use numbered lists.
 After presenting the prices, ask the patient if they would like to book this service.
 If yes → call proceed_to_booking.
 If no or they want something else → call end_price_inquiry.

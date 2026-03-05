@@ -28,7 +28,8 @@ from flows.handlers.booking_handlers import (
     show_more_same_day_slots_handler,
     search_different_date_handler,
     handle_radius_expansion_response,
-    skip_current_service_handler
+    skip_current_service_handler,
+    handle_get_price_info,
 )
 from config.settings import settings
 from utils.italian_time import time_to_italian_words
@@ -564,6 +565,15 @@ def create_slot_selection_node(slots: List[Dict], service: HealthService, is_cer
         start_time_24h = start_dt.strftime("%-H:%M")
         end_time_24h = end_dt.strftime("%-H:%M")
 
+        # Extract doctor name from providing_entity.professional
+        providing_entity = slot.get('providing_entity', {})
+        professional = providing_entity.get('professional', {})
+        doctor_name = f"{professional.get('name', '')} {professional.get('surname', '')}".strip()
+
+        # Extract price from health_services
+        health_services = slot.get('health_services', [])
+        slot_price = health_services[0].get('price', 0) if health_services else 0
+
         parsed_slot = {
             'original': slot,
             'date_key': date_key,
@@ -574,7 +584,9 @@ def create_slot_selection_node(slots: List[Dict], service: HealthService, is_cer
             'end_dt': end_dt,
             'providing_entity_availability_uuid': slot.get('providing_entity_availability_uuid', ''),
             'health_center_name': slot.get('health_center', {}).get('name', ''),
-            'service_name': slot.get('health_services', [{}])[0].get('name', service.name)
+            'service_name': health_services[0].get('name', service.name) if health_services else service.name,
+            'doctor_name': doctor_name,
+            'price': slot_price,
         }
 
         parsed_slots.append(parsed_slot)
@@ -885,6 +897,30 @@ Ask the user which time works best for them."""
         logger.success(f"🚀 OPTIMIZED: Sending only {len(minimal_slots_for_llm)} slots to LLM instead of {len(slots)}")
         logger.info(f"🚀 Times (Italian): {[slot['time_italian'] for slot in minimal_slots_for_llm]}")
         logger.info(f"🚀 Italian→UUID mapping: {slot_context['italian_to_uuid_map']}")
+
+        # Build price info for get_price_info function (stored in state via slot_cache)
+        # Groups slots by price with doctor name and times
+        price_map = {}  # price -> [{doctor, time_italian}]
+        for slot_data in selected_slots_for_llm:
+            p = slot_data.get('price', 0)
+            doc = slot_data.get('doctor_name', '')
+            t = slot_data.get('start_time_24h', '')
+            t_italian = time_to_italian_words(t)
+            key = str(p)
+            if key not in price_map:
+                price_map[key] = []
+            price_map[key].append({"doctor": doc, "time": t_italian})
+
+        prices_numeric = [s.get('price', 0) for s in selected_slots_for_llm if s.get('price', 0) > 0]
+        price_info = {
+            "price_range_min": min(prices_numeric) if prices_numeric else 0,
+            "price_range_max": max(prices_numeric) if prices_numeric else 0,
+            "prices": price_map,
+        }
+        # Store in slot_cache so handler can read it from state
+        if slot_cache is not None:
+            slot_cache["_price_info"] = price_info
+        logger.info(f"💰 Price info built: range {price_info['price_range_min']}-{price_info['price_range_max']}€, {len(price_map)} unique prices")
     else:
         # No specific slots selected, just dates
         slot_context = {
@@ -927,8 +963,10 @@ Ask the user which time works best for them."""
 2. Match to closest time in the mapping above
 3. Use the UUID as providing_entity_availability_uuid
 
-- Never mention prices, UUIDs, or technical details
+- Never proactively mention prices or UUIDs — but if the patient ASKS about price/cost, ALWAYS call get_price_info even if you have old price data in context (prices change when slots change)
 - Be conversational and human
+- When presenting price information, speak naturally without numbered lists. Example: "Il prezzo con il Dottor Rossi alle nove e trenta è di 85 euro, mentre con la Dottoressa Bianchi alle dieci è di 95 euro"
+- If the patient asks for a price you don't have, suggest the closest available price
 
 🔇 SILENT FUNCTION CALLS: When calling select_slot, call it IMMEDIATELY with NO preceding text. Do NOT say "Prenoto", "Un momento", "I'll book that" or similar — the system handles status messages automatically.
 
@@ -987,6 +1025,13 @@ RULES:
                     }
                 },
                 required=["providing_entity_availability_uuid"]
+            ),
+            FlowsFunctionSchema(
+                name="get_price_info",
+                handler=handle_get_price_info,
+                description="Get price information for CURRENT available slots. MUST call this every time patient asks about price/cost — never reuse old price data from context, as prices change when date changes.",
+                properties={},
+                required=[]
             ),
             FlowsFunctionSchema(
                 name="show_more_same_day_slots",

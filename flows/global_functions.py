@@ -3,7 +3,29 @@ Global Function Schemas
 11 global functions available at every node in the conversation.
 """
 
+import json
+import os
+from loguru import logger
+
 from pipecat_flows import FlowsFunctionSchema
+
+
+def _load_doctor_surnames() -> str:
+    """Load doctor surnames from data/doctor_names.json for LLM spell-check."""
+    try:
+        json_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "doctor_names.json")
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        surnames = data.get("surnames", [])
+        if surnames:
+            logger.info(f"🩺 Loaded {len(surnames)} doctor surnames for LLM function schema")
+            return ", ".join(surnames)
+    except Exception as e:
+        logger.warning(f"⚠️ Could not load doctor surnames: {e}")
+    return ""
+
+
+_DOCTOR_SURNAMES = _load_doctor_surnames()
 
 from flows.handlers.global_handlers import (
     global_knowledge_base,
@@ -171,7 +193,12 @@ GLOBAL_FUNCTIONS = [
             },
             "doctor_name": {
                 "type": "string",
-                "description": "Doctor's name if patient requests a specific doctor (e.g., 'Rossi', 'Mario Rossi'). Strip titles like Dottor/Dottoressa/Dr."
+                "description": (
+                    "Doctor's surname if patient requests a specific doctor. Strip titles (Dottor/Dottoressa/Dr). "
+                    "IMPORTANT: Match against known doctors and use correct spelling if spoken name sounds similar. "
+                    f"KNOWN DOCTORS: {_DOCTOR_SURNAMES}" if _DOCTOR_SURNAMES else
+                    "Doctor's name if patient requests a specific doctor (e.g., 'Rossi', 'Mario Rossi'). Strip titles like Dottor/Dottoressa/Dr."
+                )
             }
         },
         required=["service_request"],
