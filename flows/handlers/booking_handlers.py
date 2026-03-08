@@ -863,7 +863,7 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
 
         tts_service = flow_manager.state.get("tts_service")
         if tts_service:
-            await tts_service.queue_frame(TTSSpeakFrame(f"Cerco gli appuntamenti disponibili per {service_name}. Attendi un momento."))
+            await tts_service.queue_frame(TTSSpeakFrame(f"Cerco gli appuntamenti disponibili per {service_name.replace(' + ', ' più ')}. Attendi un momento."))
         return await perform_slot_search_and_transition(args, flow_manager)
 
     except (ValueError, TypeError) as e:
@@ -1704,7 +1704,7 @@ async def select_slot_and_book(args: FlowArgs, flow_manager: FlowManager) -> Tup
     current_service_name = selected_services[0].name if selected_services else "your appointment"
     tts_service = flow_manager.state.get("tts_service")
     if tts_service:
-        await tts_service.queue_frame(TTSSpeakFrame(f"Prenotazione della fascia oraria per {current_service_name}. Attendi..."))
+        await tts_service.queue_frame(TTSSpeakFrame(f"Prenotazione della fascia oraria per {current_service_name.replace(' + ', ' più ')}. Attendi..."))
 
     return await perform_slot_booking_and_transition(args, flow_manager)
 
@@ -1737,7 +1737,7 @@ async def create_booking_and_transition(args: FlowArgs, flow_manager: FlowManage
         current_service_name = selected_services[current_service_index].name if current_service_index < len(selected_services) else "your appointment"
         tts_service = flow_manager.state.get("tts_service")
         if tts_service:
-            await tts_service.queue_frame(TTSSpeakFrame(f"Prenotazione della fascia oraria per {current_service_name}. Attendi..."))
+            await tts_service.queue_frame(TTSSpeakFrame(f"Prenotazione della fascia oraria per {current_service_name.replace(' + ', ' più ')}. Attendi..."))
 
         return await perform_slot_booking_and_transition(args, flow_manager)
 
@@ -2465,7 +2465,7 @@ async def search_different_date_handler(args: FlowArgs, flow_manager: FlowManage
         # Speak TTS filler before slot search
         tts_service = flow_manager.state.get("tts_service")
         if tts_service:
-            await tts_service.queue_frame(TTSSpeakFrame(f"Cerco disponibilità per {current_service_name} nella nuova data. Un momento."))
+            await tts_service.queue_frame(TTSSpeakFrame(f"Cerco disponibilità per {current_service_name.replace(' + ', ' più ')} nella nuova data. Un momento."))
 
         # Format DOB for API (remove dashes)
         patient_dob = flow_manager.state.get("patient_dob", "1980-04-13")
