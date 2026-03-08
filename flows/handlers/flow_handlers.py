@@ -222,10 +222,10 @@ async def finalize_services_and_search_centers(args: FlowArgs, flow_manager: Flo
         
         # Process additional services from the decision flow
         for additional_service in additional_services:
-            service_uuid = additional_service.get("uuid")
-            service_name = additional_service.get("name")
-            service_code = additional_service.get("code")
-            service_sector = additional_service.get("sector")
+            service_uuid = additional_service.get("uuid", "").strip(" ,")
+            service_name = additional_service.get("name", "").strip()
+            service_code = additional_service.get("code", "").strip(" ,")
+            service_sector = additional_service.get("sector", "").strip()
 
             logger.debug(f"🔍 Processing additional service from LLM:")
             logger.debug(f"   Name: {service_name}")
