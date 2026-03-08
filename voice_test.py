@@ -149,7 +149,6 @@ from services.config import config
 from pipeline.components import create_stt_service, create_tts_service, create_llm_service, create_context_aggregator
 from flows.manager import create_flow_manager, initialize_flow_manager
 from services.transcript_manager import get_transcript_manager, cleanup_transcript_manager
-from utils.stt_switcher import initialize_stt_switcher
 
 # Load environment variables
 load_dotenv(override=True)
@@ -519,9 +518,6 @@ class DailyHealthcareFlowTester:
         if self.patient_dob:
             self.flow_manager.state["patient_dob"] = self.patient_dob
             logger.info(f"📅 Pre-populated patient DOB: {self.patient_dob}")
-
-        # Initialize STT switcher for dynamic transcription (IDENTICAL TO BOT.PY)
-        initialize_stt_switcher(stt, self.flow_manager)
 
         # Setup transcript recording event handler (must be AFTER flow_manager creation)
         @transcript_processor.event_handler("on_transcript_update")

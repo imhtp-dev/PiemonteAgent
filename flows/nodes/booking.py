@@ -686,12 +686,13 @@ IMPORTANT INSTRUCTIONS:
 
 If the patient asks about other dates or wants a different date, tell them the dates listed above with how many slots each has.
 If they pick one, call update_date_preference with the date in YYYY-MM-DD format.
+If the patient wants a date NOT in this list, call search_different_date to search for new slots — NEVER say no slots without searching first.
 
 Ask the user if any of the shown times work for them, or if they'd like to see more options."""
             else:
                 task_content += """
 
-Ask the user if any of the shown times work for them."""
+Ask the user if any of the shown times work for them, or if they'd like a different date (call search_different_date)."""
 
             logger.info(f"✅ FIRST AVAILABLE: Sending ALL {len(tomorrow_slots)} slots from TOMORROW ({tomorrow_date_key})")
             logger.info(f"🕐 Earliest time tomorrow: {earliest_time}")
@@ -746,12 +747,13 @@ IMPORTANT INSTRUCTIONS:
 
 If the patient asks about other dates or wants a different date, tell them the dates listed above with how many slots each has.
 If they pick one, call update_date_preference with the date in YYYY-MM-DD format.
+If the patient wants a date NOT in this list, call search_different_date to search for new slots — NEVER say no slots without searching first.
 
 Ask the user if any of these times work for them, or if they'd like a different date."""
             else:
                 task_content += """
 
-Ask the user if any of these times work for them, or if they'd like to search for a different date."""
+Ask the user if any of these times work for them, or if they'd like a different date (call search_different_date)."""
 
             logger.info(f"⚠️ FIRST AVAILABLE: No slots today, sending ALL {len(earliest_date_slots)} slots from earliest date ({earliest_date_key})")
             logger.info(f"🕐 Earliest time on {earliest_date_key}: {earliest_time}")
@@ -1015,6 +1017,8 @@ Ask the user which time works best for them."""
 - If the patient asks for a price you don't have, suggest the closest available price
 
 🔇 SILENT FUNCTION CALLS: When calling select_slot, call it IMMEDIATELY with NO preceding text. Do NOT say "Prenoto", "Un momento", "I'll book that" or similar — the system handles status messages automatically.
+
+🔍 DIFFERENT DATE: If the patient wants a date NOT listed in the available dates above, ALWAYS call search_different_date with the requested date. NEVER say there are no slots without searching first.
 
 {settings.language_config}"""
     else:

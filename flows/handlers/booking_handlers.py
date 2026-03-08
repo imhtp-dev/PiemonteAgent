@@ -683,7 +683,7 @@ async def auto_search_first_available(flow_manager: FlowManager) -> Tuple[Dict[s
     # Normal booking: TTS filler + slot search
     tts_service = flow_manager.state.get("tts_service")
     if tts_service:
-        await tts_service.queue_frame(TTSSpeakFrame(f"Cerco subito la prima disponibilità per {service_name}. Attendi un momento."))
+        await tts_service.queue_frame(TTSSpeakFrame(f"Cerco subito la prima disponibilità per {service_name.replace(' + ', ' più ')}. Attendi un momento."))
     return await perform_slot_search_and_transition({}, flow_manager)
 
 
@@ -760,7 +760,7 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
 
             tts_service = flow_manager.state.get("tts_service")
             if tts_service:
-                await tts_service.queue_frame(TTSSpeakFrame(f"Cerco subito la prima disponibilità per {service_name}. Attendi un momento."))
+                await tts_service.queue_frame(TTSSpeakFrame(f"Cerco subito la prima disponibilità per {service_name.replace(' + ', ' più ')}. Attendi un momento."))
             return await perform_slot_search_and_transition(args, flow_manager)
 
         # Parse and validate date (for normal date selection, not first available)
