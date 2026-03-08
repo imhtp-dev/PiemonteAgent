@@ -387,6 +387,7 @@ def create_collect_datetime_node(service_name: str = None, is_multi_service: boo
     today_date = today.strftime("%Y-%m-%d")
     today_day = today.strftime("%A")  # Full day name (e.g., "Thursday")
     today_formatted = today.strftime("%B %d, %Y")
+    tomorrow_date = (today + timedelta(days=1)).strftime("%Y-%m-%d")
 
     # Determine node name and task content based on service name
     if service_name:
@@ -425,6 +426,9 @@ def create_collect_datetime_node(service_name: str = None, is_multi_service: boo
 
 Today is {today_day}, {today_formatted} (date: {today_date}). The current year is {settings.current_year}.
 
+⛔ IMPORTANT: Today's date is NOT available for booking. The earliest bookable date is TOMORROW ({tomorrow_date}).
+If the patient asks for today or "oggi", tell them: "Mi dispiace, la prima data disponibile per la prenotazione è domani, {tomorrow_date}."
+
 🚨 CRITICAL: You MUST ask the patient for their preferred date and time FIRST.
 NEVER call collect_datetime automatically without the patient explicitly stating a date or time preference.
 Wait for the patient to respond before calling any function.
@@ -446,7 +450,7 @@ ONLY if the patient EXPLICITLY says one of these phrases:
 - "give me the first one" / "dammi il primo"
 
 Then respond with:
-- preferred_date: "{today_date}" (TODAY'S DATE)
+- preferred_date: "{tomorrow_date}" (TOMORROW'S DATE - earliest bookable)
 - time_preference: "any"
 - first_available_mode: true
 
@@ -665,10 +669,29 @@ IMPORTANT INSTRUCTIONS:
    - Ask if they want to see the additional afternoon times"""
 
             if other_dates_count > 0:
+                # Build detailed other dates info so LLM can answer "what other dates?"
+                other_dates_info = []
+                for od in other_dates:
+                    od_slots = slots_by_date[od]
+                    od_formatted = od_slots[0]['formatted_date']
+                    od_earliest = min(s['start_time_24h'] for s in od_slots)
+                    other_dates_info.append(f"- {od_formatted} ({od}): {len(od_slots)} slots (earliest: {od_earliest})")
+                other_dates_text = "\n".join(other_dates_info)
+
                 task_content += f"""
-4. Mention that appointments are also available on {other_dates_count} other date(s) if they prefer a different day
+4. Mention that appointments are also available on other dates if they prefer a different day
+
+📅 OTHER AVAILABLE DATES:
+{other_dates_text}
+
+If the patient asks about other dates or wants a different date, tell them the dates listed above with how many slots each has.
+If they pick one, call update_date_preference with the date in YYYY-MM-DD format.
 
 Ask the user if any of the shown times work for them, or if they'd like to see more options."""
+            else:
+                task_content += """
+
+Ask the user if any of the shown times work for them."""
 
             logger.info(f"✅ FIRST AVAILABLE: Sending ALL {len(tomorrow_slots)} slots from TOMORROW ({tomorrow_date_key})")
             logger.info(f"🕐 Earliest time tomorrow: {earliest_time}")
@@ -705,12 +728,35 @@ IMPORTANT INSTRUCTIONS:
    - "We have {len(morning_slots)} morning slots and {len(afternoon_slots)} afternoon slots"
    - Ask if they want to see more options"""
 
-            task_content += """
+            # Build other dates info so LLM can answer "what other dates?"
+            other_date_keys = sorted([dk for dk in slots_by_date.keys() if dk != earliest_date_key])
+            if other_date_keys:
+                other_dates_info = []
+                for od in other_date_keys:
+                    od_slots = slots_by_date[od]
+                    od_formatted = od_slots[0]['formatted_date']
+                    od_earliest = min(s['start_time_24h'] for s in od_slots)
+                    other_dates_info.append(f"- {od_formatted} ({od}): {len(od_slots)} slots (earliest: {od_earliest})")
+                other_dates_text = "\n".join(other_dates_info)
 
-Ask the user if any of these times work for them, or if they'd like to see more options or search for a different date."""
+                task_content += f"""
+
+📅 OTHER AVAILABLE DATES:
+{other_dates_text}
+
+If the patient asks about other dates or wants a different date, tell them the dates listed above with how many slots each has.
+If they pick one, call update_date_preference with the date in YYYY-MM-DD format.
+
+Ask the user if any of these times work for them, or if they'd like a different date."""
+            else:
+                task_content += """
+
+Ask the user if any of these times work for them, or if they'd like to search for a different date."""
 
             logger.info(f"⚠️ FIRST AVAILABLE: No slots today, sending ALL {len(earliest_date_slots)} slots from earliest date ({earliest_date_key})")
             logger.info(f"🕐 Earliest time on {earliest_date_key}: {earliest_time}")
+            if other_date_keys:
+                logger.info(f"📅 Other dates with slots: {other_date_keys}")
         else:
             task_content = "I'm sorry, but there are currently no available appointments. Please try a different date or service."
             selected_slots_for_llm = []

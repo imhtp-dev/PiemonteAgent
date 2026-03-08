@@ -589,10 +589,6 @@ async def websocket_endpoint(websocket: WebSocket):
             except Exception as e:
                 logger.error(f"❌ Failed to store caller phone in Azure: {e}")
 
-        # Initialize STT switcher for dynamic transcription
-        from utils.stt_switcher import initialize_stt_switcher
-        initialize_stt_switcher(stt, flow_manager)
-
         # Setup transcript recording event handler (must be AFTER flow_manager creation)
         @transcript_processor.event_handler("on_transcript_update")
         async def on_transcript_update(processor, frame):

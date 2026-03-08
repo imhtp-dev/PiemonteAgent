@@ -108,6 +108,8 @@ async def perform_silent_center_search_and_generate_flow(args: FlowArgs, flow_ma
                 health_centers = await loop.run_in_executor(None, _search)
                 if health_centers:
                     logger.success(f"✅ Found {len(health_centers)} centers at radius={radius_display}km")
+                    for hc in health_centers:
+                        print(f"🏥 Center: {hc.name} | UUID: {hc.uuid} | Address: {getattr(hc, 'address', 'N/A')}")
                     break
             except Exception as e:
                 logger.warning(f"⚠️ Center search failed at radius={radius_display}km: {e}")

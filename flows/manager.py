@@ -45,32 +45,6 @@ async def initialize_flow_manager(flow_manager: TrackedFlowManager, start_node: 
     elif start_node == "greeting":
         # Direct to booking greeting (for testing/debugging)
         await flow_manager.initialize(create_greeting_node())
-    elif start_node == "email":
-        # Create a special entry node that switches STT then goes to email collection
-        from pipecat_flows import NodeConfig, FlowsFunctionSchema
-        from flows.handlers.patient_detail_handlers import start_email_collection_with_stt_switch
-
-        email_entry_node = NodeConfig(
-            name="email_entry",
-            role_messages=[{
-                "role": "system",
-                "content": "Switching to high-accuracy transcription for email collection."
-            }],
-            task_messages=[{
-                "role": "system",
-                "content": "I'm switching to high-accuracy mode for email collection. Please wait a moment."
-            }],
-            functions=[
-                FlowsFunctionSchema(
-                    name="start_email_collection",
-                    handler=start_email_collection_with_stt_switch,
-                    description="Initialize email collection with enhanced transcription",
-                    properties={},
-                    required=[]
-                )
-            ]
-        )
-        await flow_manager.initialize(email_entry_node)
     elif start_node == "phone":
         from flows.nodes.patient_details import create_collect_phone_node
         await flow_manager.initialize(create_collect_phone_node())

@@ -17,6 +17,13 @@ from models.requests import HealthService, HealthCenter
 from services.llm_interpretation import interpret_sorting_scenario
 from config.settings import settings
 
+ITALIAN_TZ = ZoneInfo("Europe/Rome")
+
+
+def get_min_booking_time() -> datetime:
+    """Earliest bookable moment = now + 24h in Italian timezone."""
+    return datetime.now(ITALIAN_TZ) + timedelta(hours=24)
+
 
 def _get_doctor_display_name(flow_manager: FlowManager) -> str:
     """Get selected doctor's display name from state, or empty string if not doctor-specific."""
@@ -692,21 +699,16 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
         return {"success": False, "message": "Please provide a date for your appointment"}, None
 
     try:
-        # Handle "FIRST AVAILABLE" mode - USE TOMORROW'S DATE
+        # Handle "FIRST AVAILABLE" mode - USE 24H MINIMUM
         if first_available_mode:
-            # Calculate tomorrow's date in Italian timezone
-            from zoneinfo import ZoneInfo
-            italian_tz = ZoneInfo("Europe/Rome")
-            today = datetime.now(italian_tz)
-            tomorrow = today + timedelta(days=1)
-            tomorrow_date = tomorrow.strftime('%Y-%m-%d')
-
-            # Override preferred_date with tomorrow's date
-            preferred_date = tomorrow_date
+            min_dt = get_min_booking_time()
+            preferred_date = min_dt.strftime('%Y-%m-%d')
+            # Set start_time floor so API only returns slots ≥24h from now
+            min_start_time = min_dt.strftime('%Y-%m-%d %H:%M:%S+00')
 
             flow_manager.state["preferred_date"] = preferred_date
             flow_manager.state["first_available_mode"] = True
-            flow_manager.state["start_time"] = None
+            flow_manager.state["start_time"] = min_start_time
             flow_manager.state["end_time"] = None
             flow_manager.state["time_preference"] = "any time"
             flow_manager.state["preferred_time"] = "first available"
@@ -738,7 +740,7 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
                 "selected_center": selected_center,
                 "selected_services": selected_services,
                 "preferred_date": preferred_date,
-                "start_time": None,
+                "start_time": min_start_time,
                 "end_time": None,
                 "time_preference": "any time",
                 "patient_gender": patient_gender,
@@ -763,9 +765,10 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
 
         # Parse and validate date (for normal date selection, not first available)
         date_obj = datetime.strptime(preferred_date, "%Y-%m-%d")
-        current_date = datetime.now().date()
-        if date_obj.date() < current_date:
-            return {"success": False, "message": f"Please select a future date after {current_date.strftime('%Y-%m-%d')}."}, None
+        min_dt = get_min_booking_time()
+        if date_obj.date() < min_dt.date():
+            earliest = min_dt.strftime('%Y-%m-%d')
+            return {"success": False, "message": f"La data più vicina disponibile per la prenotazione è {earliest}. Per favore scegli una data a partire da {earliest}."}, None
 
         # Store date
         flow_manager.state["preferred_date"] = preferred_date
@@ -816,6 +819,14 @@ async def collect_datetime_and_transition(args: FlowArgs, flow_manager: FlowMana
             flow_manager.state["time_preference"] = "any time"
             flow_manager.state["preferred_time"] = "any"
             logger.info(f"📅 Date collected: {preferred_date} - No time preference")
+
+        # 24h rule: if selected date == min_dt date, floor start_time to min_dt
+        if date_obj.date() == min_dt.date():
+            min_start = min_dt.strftime(f'{preferred_date} %H:%M:%S+00')
+            current_start = flow_manager.state.get("start_time")
+            if not current_start or current_start < min_start:
+                flow_manager.state["start_time"] = min_start
+                logger.info(f"⏰ 24h rule: floored start_time to {min_start}")
 
         # Get required data for slot search
         selected_services = flow_manager.state.get("selected_services", [])
@@ -870,15 +881,22 @@ async def update_date_and_search_slots(args: FlowArgs, flow_manager: FlowManager
         return {"success": False, "message": "Please provide a date for your appointment"}, None
 
     try:
-        # Parse and validate date
+        # Parse and validate date (24h rule)
         date_obj = datetime.strptime(preferred_date, "%Y-%m-%d")
-        current_date = datetime.now().date()
-        if date_obj.date() < current_date:
-            return {"success": False, "message": f"Please select a future date after {current_date.strftime('%Y-%m-%d')}."}, None
+        min_dt = get_min_booking_time()
+        if date_obj.date() < min_dt.date():
+            earliest = min_dt.strftime('%Y-%m-%d')
+            return {"success": False, "message": f"La data più vicina disponibile per la prenotazione è {earliest}. Per favore scegli una data a partire da {earliest}."}, None
 
         # Store new date
         flow_manager.state["preferred_date"] = preferred_date
         logger.info(f"📅 Updated preferred date to: {preferred_date}")
+
+        # 24h rule: if selected date == min_dt date, floor start_time to min_dt
+        if date_obj.date() == min_dt.date():
+            min_start = min_dt.strftime(f'{preferred_date} %H:%M:%S+00')
+            flow_manager.state["start_time"] = min_start
+            logger.info(f"⏰ 24h rule: floored start_time to {min_start}")
 
         # Handle time preference
         if time_preference == "preserve_existing":
@@ -1280,7 +1298,6 @@ async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowM
         # CRITICAL: Client-side filtering if start_time constraint exists
         # The API doesn't always respect start_time parameter, so we filter client-side
         if start_time and slots_response:
-            from datetime import datetime
             original_count = len(slots_response)
 
             # Parse constraint time
@@ -1306,6 +1323,32 @@ async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowM
             except Exception as e:
                 logger.error(f"❌ Failed to apply client-side time filter: {e}")
                 # Continue with unfiltered results if filtering fails
+
+        # Safety net: filter out slots < 24h from now (hardcoded business rule)
+        if slots_response:
+            min_booking = get_min_booking_time()
+            original_count = len(slots_response)
+            try:
+                filtered = []
+                for slot in slots_response:
+                    slot_start = slot.get("start_time", "")
+                    if slot_start:
+                        slot_dt = datetime.fromisoformat(slot_start)
+                        # Make min_booking offset-naive if slot_dt is naive, or compare aware
+                        if slot_dt.tzinfo is None:
+                            if slot_dt >= min_booking.replace(tzinfo=None):
+                                filtered.append(slot)
+                        else:
+                            if slot_dt >= min_booking:
+                                filtered.append(slot)
+                    else:
+                        filtered.append(slot)
+                slots_response = filtered
+                removed = original_count - len(slots_response)
+                if removed > 0:
+                    logger.info(f"⏰ 24h SAFETY NET: removed {removed}/{original_count} slots before {min_booking.isoformat()}")
+            except Exception as e:
+                logger.error(f"❌ Failed to apply 24h safety net filter: {e}")
 
         if slots_response and len(slots_response) > 0:
             # Store available slots and current service name
