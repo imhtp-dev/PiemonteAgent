@@ -449,13 +449,12 @@ async def perform_booking_creation_and_transition(args: FlowArgs, flow_manager: 
         from services.booking_api import create_booking
         from utils.api_retry import retry_api_call
 
-        # Prepare booking data - ONLY UUID for existing patients, full details for new patients
+        # Existing patient: UUID + phone (phone may have been updated by patient)
+        # New patient: full details
         if patient_found_in_db and patient_db_id:
-            # Existing patient: UUID + phone (phone may have been updated by patient)
             patient_data = {"uuid": patient_db_id, "phone": patient_phone}
-            logger.info(f"✅ Using existing patient UUID: {patient_db_id}, phone: {patient_phone}")
+            logger.info(f"✅ Existing patient UUID: {patient_db_id}, phone: {patient_phone}")
         else:
-            # New patient: Send all required details
             patient_data = {
                 "name": patient_name,
                 "surname": patient_surname,
@@ -464,7 +463,7 @@ async def perform_booking_creation_and_transition(args: FlowArgs, flow_manager: 
                 "date_of_birth": patient_dob,
                 "gender": patient_gender.upper()
             }
-            logger.info("📝 Creating booking for new patient with full details")
+            logger.info(f"📝 New patient, full details with phone: {patient_phone}")
 
         booking_data = {
             "patient": patient_data,
