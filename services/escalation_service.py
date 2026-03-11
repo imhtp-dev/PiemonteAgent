@@ -18,10 +18,9 @@ async def call_escalation_api(
     sentiment: str,
     action: str,
     duration: str,
-    service: str,
+    queue_code: str,
     call_id: str = None,
     stream_sid: str = None,
-    sector: str = "info"
 ) -> bool:
     """
     Call bridge escalation API to transfer call to human operator
@@ -35,10 +34,9 @@ async def call_escalation_api(
         sentiment: positive|neutral|negative
         action: transfer
         duration: Duration in seconds (as string)
-        service: Service code 1-5 (as string)
+        queue_code: Full Talkdesk queue code (e.g. "1|3|2", "2|2|5")
         call_id: Session/call ID from flow_manager.state (for database row matching)
-        stream_sid: Talkdesk stream SID (for direct escalation, eliminates Redis dependency)
-        sector: "booking" or "info" - determines Talkdesk routing prefix (1|1|x vs 2|2|x)
+        stream_sid: Talkdesk stream SID (for direct escalation)
 
     Returns:
         bool: True if escalation API call succeeded, False otherwise
@@ -50,14 +48,22 @@ async def call_escalation_api(
             logger.error("❌ call_id is required for escalation API")
             return False
 
+        # Backward compat: derive old service + sector from queue_code
+        # so old bridge still works until it's updated
+        if queue_code.startswith("1|"):
+            compat_sector = "booking"
+            compat_service = queue_code.split("|")[-1]
+        else:
+            compat_sector = "info"
+            compat_service = queue_code.split("|")[-1]
+
         # Prepare payload for bridge escalation endpoint
-        # Pass both call_id (for DB matching) and stream_sid (for direct Talkdesk escalation)
         payload = {
             "message": {
                 "call": {
-                    "id": call_id  # Session ID for database row matching
+                    "id": call_id
                 },
-                "stream_sid": stream_sid,  # ✅ Talkdesk stream SID for direct escalation
+                "stream_sid": stream_sid,
                 "toolCallList": [
                     {
                         "id": "transfer_tool_call",
@@ -69,8 +75,10 @@ async def call_escalation_api(
                                 "sentiment": sentiment,
                                 "action": action,
                                 "duration": duration,
-                                "service": service,
-                                "sector": sector
+                                "queue_code": queue_code,
+                                # Backward compat for old bridge
+                                "service": compat_service,
+                                "sector": compat_sector,
                             }
                         }
                     }
@@ -84,16 +92,14 @@ async def call_escalation_api(
             "escalation.sentiment": sentiment,
             "escalation.action": action,
             "escalation.duration_seconds": duration,
-            "escalation.service_code": service,
+            "escalation.queue_code": queue_code,
             "escalation.summary_length": len(summary),
             "escalation.has_stream_sid": bool(stream_sid),
-            "escalation.sector": sector
         })
 
         logger.info(f"Calling escalation API: {ESCALATION_API_URL}")
-        logger.info(f"Escalation data: call_id={call_id}, stream_sid={stream_sid or 'Not provided'}, "
-                   f"summary_len={len(summary)}, sentiment={sentiment}, action={action}, "
-                   f"duration={duration}s, service={service}, sector={sector}")
+        logger.info(f"Escalation data: call_id={call_id}, stream_sid={stream_sid or 'N/A'}, "
+                   f"queue_code={queue_code}, sentiment={sentiment}, duration={duration}s")
 
         timeout = aiohttp.ClientTimeout(total=10)
 

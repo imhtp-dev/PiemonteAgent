@@ -506,6 +506,7 @@ class DailyHealthcareFlowTester:
         self.flow_manager.state["business_status"] = TEST_BUSINESS_STATUS
         self.flow_manager.state["session_id"] = self.session_id
         self.flow_manager.state["stream_sid"] = ""  # Empty for Daily testing (no Talkdesk)
+        self.flow_manager.state["ivr_path"] = "1|3|2"  # Default test IVR path (diagnostic imaging private)
         logger.info(f"✅ Business status stored in flow state: open (testing)")
         logger.info(f"✅ Session ID stored in flow state: {self.session_id}")
         logger.info(f"✅ Stream SID: Not applicable (Daily room testing)")

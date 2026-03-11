@@ -87,12 +87,17 @@ def validate_and_fix_llm_output(analysis: Dict[str, Any]) -> Dict[str, Any]:
     if analysis.get("sentiment") not in valid_sentiments:
         analysis["sentiment"] = "neutral"
 
-    # Validate service
-    valid_services = ["1", "2", "3", "4", "5"]
-    if str(analysis.get("service", "5")) not in valid_services:
-        analysis["service"] = "5"
-    else:
-        analysis["service"] = str(analysis.get("service", "5"))
+    # Validate queue_code (new IVR routing)
+    from services.ivr_routing import ALL_VALID_QUEUES, DEFAULT_INFO_QUEUE
+    queue_code = analysis.get("queue_code", "")
+    if queue_code not in ALL_VALID_QUEUES:
+        # Try to salvage old-format "service" field for backward compat
+        old_service = str(analysis.get("service", ""))
+        if old_service in ["1", "2", "3", "4", "5"]:
+            queue_code = f"2|2|{old_service}"
+        else:
+            queue_code = DEFAULT_INFO_QUEUE
+    analysis["queue_code"] = queue_code
 
     return analysis
 
@@ -349,10 +354,13 @@ class CallDataExtractor:
         Use LLM to analyze call and extract structured data
 
         Returns:
-            Dict with: action, sentiment, service (1-5), motivazione, esito_chiamata, patient_intent, summary
+            Dict with: action, sentiment, queue_code, motivazione, esito_chiamata, patient_intent, summary
         """
         try:
             logger.info("🤖 Analyzing call with LLM...")
+
+            # Get IVR path for LLM fallback hint
+            ivr_path = flow_state.get("ivr_path", "1|3|2")
 
             # Build prompt with strict enum values and examples
             prompt = f"""You are an expert analyst of telephone conversations in the healthcare sector.
@@ -380,19 +388,31 @@ Analyze the transcript and classify the call.
 ### OTHER FIELDS:
 - ACTION: completed | question | transfer | book
 - SENTIMENT: positive | neutral | negative
-- SERVICE (IVR code):
-  - 1: Blood sampling times or laboratory services
-  - 2: Visits, Ultrasounds, or Outpatient Services
-  - 3: MRIs, X-rays, CT scans, DEXA scans, Mammograms
-  - 4: Sports medical visits
-  - 5: OTHER INFORMATION
+- QUEUE_CODE (Talkdesk IVR routing — choose the EXACT code):
+  IF the call was an INFO call (patient only asked questions, no booking attempted):
+    - 2|2|1  → Lab/blood draw question
+    - 2|2|2  → Visit/ultrasound/outpatient question
+    - 2|2|3  → Imaging question (RX, TAC, RMN, MOC, Mammografia)
+    - 2|2|4  → Sports medicine question
+    - 2|2|5  → Other/general info
+  IF the call involved BOOKING (patient attempted or completed a booking):
+    - 1|1    → Laboratorio (prelievi, analisi sangue)
+    - 1|2|1  → Visite/Ecografie/Ambulatoriali con fondi e assicurazioni
+    - 1|2|2  → Visite/Ecografie/Ambulatoriali in regime Privato
+    - 1|3|1  → Diagnostica immagini (RX, TAC, RMN, MOC, Mammografie) con fondi/assicurazioni
+    - 1|3|2  → Diagnostica immagini in regime Privato
+    - 1|4    → Medicina dello sport
+    - 1|5    → Disdetta/Spostare appuntamento già prenotato
+  To decide fondi vs privato: if patient mentioned insurance/fund/assicurazione/fondo/convenzione → fondi (x|x|1), otherwise → privato (x|x|2).
+  If unsure between fondi and privato, use the original IVR path: {ivr_path}
 - PATIENT_INTENT: Brief description (max 100 chars)
 - SUMMARY: Max 250 characters
 
 ## OUTPUT FORMAT (JSON only, no explanations):
-{{"summary": "...", "action": "...", "sentiment": "...", "service": "1-5", "esito_chiamata": "COMPLETATA|TRASFERITA|NON COMPLETATA", "motivazione": "...", "patient_intent": "..."}}
+{{"summary": "...", "action": "...", "sentiment": "...", "queue_code": "<exact code from list above>", "esito_chiamata": "COMPLETATA|TRASFERITA|NON COMPLETATA", "motivazione": "...", "patient_intent": "..."}}
 
 CRITICAL: motivazione MUST be one of the exact values listed above. No variations allowed.
+CRITICAL: queue_code MUST be one of the exact codes listed above. No variations allowed.
 
 TRANSCRIPT:
 {transcript_text}"""
@@ -458,26 +478,24 @@ TRANSCRIPT:
         motivazione = self._determine_motivazione(flow_state, action)
         patient_intent = self._extract_patient_intent(flow_state)
 
-        # Determine service code based on functions called
-        service = "5"  # Default: OTHER
+        # Determine queue code based on sector + functions called
+        from services.ivr_routing import resolve_booking_queue_from_keywords, resolve_info_digit_from_keywords
+
         functions_called = flow_state.get("functions_called", [])
-        for func in functions_called:
-            func_lower = func.lower()
-            if "clinic" in func_lower or "blood" in func_lower or "laboratorio" in func_lower or "prelievo" in func_lower:
-                service = "1"  # Lab/blood draws
-                break
-            elif "price" in func_lower or "visit" in func_lower or "booking" in func_lower:
-                service = "2"  # Poli (visits, ultrasounds, outpatient)
-                break
-            elif "exam" in func_lower:
-                service = "2"  # Poli
-                break
-            elif any(kw in func_lower for kw in ["rmn", "rx", "tac", "moc", "mammograf", "radiolog", "imaging"]):
-                service = "3"  # Diagnostica per immagini
-                break
-            elif "sport" in func_lower:
-                service = "4"  # Medicina dello sport
-                break
+        ivr_path = flow_state.get("ivr_path", "")
+
+        # Determine sector
+        sector = "info"
+        if flow_state.get("selected_services") or flow_state.get("booking_in_progress"):
+            sector = "booking"
+        elif flow_state.get("transfer_type") in ("previous_appointment_cancellation", "capability_limitation"):
+            sector = "booking"
+
+        if sector == "booking":
+            queue_code = resolve_booking_queue_from_keywords(functions_called, ivr_path)
+        else:
+            digit = resolve_info_digit_from_keywords(functions_called)
+            queue_code = f"2|2|{digit}"
 
         summary = f"Chiamata {esito_chiamata.lower()}. Paziente ha richiesto: {patient_intent or 'informazioni'}."
 
@@ -485,7 +503,7 @@ TRANSCRIPT:
             "summary": summary[:250],
             "action": action,
             "sentiment": sentiment,
-            "service": service,
+            "queue_code": queue_code,
             "esito_chiamata": esito_chiamata,
             "motivazione": motivazione,
             "patient_intent": patient_intent or "Richiesta informazioni"
@@ -572,7 +590,7 @@ TRANSCRIPT:
         - sentiment
         - action (will be "transfer")
         - duration_seconds (from call start to NOW)
-        - service (IVR code 1-5)
+        - queue_code (Talkdesk IVR queue routing code)
 
         Args:
             flow_state: Flow manager state
@@ -599,34 +617,39 @@ TRANSCRIPT:
                 logger.warning("⚠️ No transcript for transfer analysis, using fallback")
                 analysis = self._get_fallback_analysis(flow_state)
 
-            # Extract and format data for escalation API (pass through all LLM fields)
-            escalation_data = {
-                "summary": analysis.get("summary", "Transfer richiesto")[:250],
-                "sentiment": analysis.get("sentiment", "neutral"),
-                "action": analysis.get("action", "transfer"),
-                "duration_seconds": int(duration_seconds),
-                "service": str(analysis.get("service", "5")),
-                # Pass through LLM-generated categorization
-                "esito_chiamata": analysis.get("esito_chiamata", "TRASFERITA"),
-                "motivazione": analysis.get("motivazione", "Richiesta paziente"),
-                "patient_intent": analysis.get("patient_intent", "Richiesta assistenza operatore")
-            }
+            # Resolve queue_code with fallback
+            from services.ivr_routing import resolve_fallback_queue, is_valid_queue_code
+            ivr_path = flow_state.get("ivr_path", "")
 
-            # Determine sector from flow state
-            sector = "info"  # Default
+            # Determine sector for fallback
+            sector = "info"
             if flow_state.get("transfer_type") == "previous_appointment_cancellation":
                 sector = "booking"
             elif flow_state.get("transfer_type") == "capability_limitation":
                 sector = "booking"
             elif flow_state.get("selected_services") or flow_state.get("booking_in_progress"):
                 sector = "booking"
-            escalation_data["sector"] = sector
+
+            queue_code = analysis.get("queue_code", "")
+            if not is_valid_queue_code(queue_code):
+                queue_code = resolve_fallback_queue(sector, ivr_path)
+
+            # Extract and format data for escalation API
+            escalation_data = {
+                "summary": analysis.get("summary", "Transfer richiesto")[:250],
+                "sentiment": analysis.get("sentiment", "neutral"),
+                "action": analysis.get("action", "transfer"),
+                "duration_seconds": int(duration_seconds),
+                "queue_code": queue_code,
+                "esito_chiamata": analysis.get("esito_chiamata", "TRASFERITA"),
+                "motivazione": analysis.get("motivazione", "Richiesta paziente"),
+                "patient_intent": analysis.get("patient_intent", "Richiesta assistenza operatore")
+            }
 
             logger.success(f"✅ Transfer analysis completed:")
             logger.info(f"   Duration: {escalation_data['duration_seconds']}s")
             logger.info(f"   Sentiment: {escalation_data['sentiment']}")
-            logger.info(f"   Service: {escalation_data['service']}")
-            logger.info(f"   Sector: {escalation_data['sector']}")
+            logger.info(f"   Queue Code: {escalation_data['queue_code']}")
             logger.info(f"   Esito: {escalation_data['esito_chiamata']}")
             logger.info(f"   Motivazione: {escalation_data['motivazione']}")
             logger.info(f"   Summary: {escalation_data['summary'][:100]}...")
@@ -639,12 +662,13 @@ TRANSCRIPT:
             traceback.print_exc()
 
             # Return safe defaults with valid enum values
+            from services.ivr_routing import resolve_fallback_queue
             return {
                 "summary": "Transfer richiesto dal paziente",
                 "sentiment": "neutral",
                 "action": "transfer",
                 "duration_seconds": 0,
-                "service": "5",
+                "queue_code": resolve_fallback_queue("booking", flow_state.get("ivr_path", "")),
                 "esito_chiamata": "TRASFERITA",
                 "motivazione": "Richiesta paziente",
                 "patient_intent": "Richiesta assistenza operatore"
@@ -806,7 +830,7 @@ TRANSCRIPT:
                 # Use LLM-generated values from transfer analysis (no hardcoding)
                 action = transfer_data.get("action", "transfer")
                 sentiment = transfer_data.get("sentiment", "neutral")
-                service = str(transfer_data.get("service", "5"))
+                service = transfer_data.get("queue_code", transfer_data.get("service", "2|2|5"))
                 esito_chiamata = transfer_data.get("esito_chiamata", "TRASFERITA")
                 motivazione = transfer_data.get("motivazione", "Richiesta paziente")
                 patient_intent = transfer_data.get("patient_intent", "Richiesta assistenza operatore")
@@ -831,7 +855,7 @@ TRANSCRIPT:
                 # Extract fields from LLM analysis
                 action = analysis.get("action", "completed")
                 sentiment = analysis.get("sentiment", "neutral")
-                service = str(analysis.get("service", "5"))  # IVR code 1-5
+                service = analysis.get("queue_code", analysis.get("service", "2|2|5"))
                 esito_chiamata = analysis.get("esito_chiamata", "COMPLETATA")
                 motivazione = analysis.get("motivazione", "Info fornite")
                 patient_intent = analysis.get("patient_intent", "Richiesta informazioni")
@@ -859,7 +883,7 @@ TRANSCRIPT:
             logger.info(f"   Cost: €{cost:.4f}" if cost else "   Cost: N/A")
             logger.info(f"   Action: {action}")
             logger.info(f"   Sentiment: {sentiment}")
-            logger.info(f"   Service: {service}")
+            logger.info(f"   Queue Code: {service}")
             logger.info(f"   Esito: {esito_chiamata}")
             logger.info(f"   Motivazione: {motivazione}")
             logger.info(f"   Phone: {phone_number or 'N/A'}")

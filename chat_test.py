@@ -316,7 +316,7 @@ async def report_to_talkdesk(flow_manager, call_extractor):
         call_data = {
             "interaction_id": interaction_id,
             "sentiment": analysis.get("sentiment", "neutral"),
-            "service": str(analysis.get("service", "5")),
+            "service": analysis.get("queue_code", analysis.get("service", "2|2|5")),
             "summary": analysis.get("summary", "")[:250],  # Max 250 chars
             "duration_seconds": int(call_extractor._calculate_duration() or 0)
         }
@@ -329,7 +329,7 @@ async def report_to_talkdesk(flow_manager, call_extractor):
         logger.info(f"   Summary: {call_data['summary'][:100]}...")
 
         # Send to Talkdesk
-        from talkdesk_hangup import send_to_talkdesk
+        from services.talkdesk_service import send_to_talkdesk
         success = send_to_talkdesk(call_data)
 
         if success:
@@ -1130,6 +1130,7 @@ async def websocket_endpoint(websocket: WebSocket):
         flow_manager.state["business_status"] = TEST_BUSINESS_STATUS
         flow_manager.state["session_id"] = session_id
         flow_manager.state["stream_sid"] = ""  # Empty for text chat testing (no Talkdesk)
+        flow_manager.state["ivr_path"] = "1|3|2"  # Default test IVR path (diagnostic imaging private)
         flow_manager.state["interaction_id"] = "d2568ef3-b8c9-4cbc-ac90-6100d4c0e8c0"  # ✅ Simulated Talkdesk interaction ID
         flow_manager.state["caller_phone_from_talkdesk"] = "+393333319326"  # ✅ Default test phone number
         logger.info(f"✅ Business status stored in flow state: open (testing)")

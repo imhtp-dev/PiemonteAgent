@@ -149,20 +149,14 @@ async def report_to_talkdesk(flow_manager, call_extractor):
         else:
             logger.info("✅ Using pre-computed analysis from transfer preparation")
 
-        # Determine sector and service code
-        service_code = str(analysis.get("service", "5"))
-        sector = analysis.get("sector", "info")
-        # Also check flow state for booking context
-        if not sector or sector == "info":
-            if flow_manager.state.get("selected_services") or flow_manager.state.get("booking_in_progress"):
-                sector = "booking"
-        service_prefix = "1|1" if sector == "booking" else "2|2"
+        # Get queue_code from analysis (new IVR routing)
+        queue_code = analysis.get("queue_code", analysis.get("service", "2|2|5"))
 
         # Build Talkdesk payload
         call_data = {
             "interaction_id": interaction_id,
             "sentiment": analysis.get("sentiment", "neutral"),
-            "service": f"{service_prefix}|{service_code}",
+            "service": queue_code,
             "summary": analysis.get("summary", "")[:250],  # Max 250 chars
             "duration_seconds": int(call_extractor._calculate_duration() or 0)
         }
@@ -372,6 +366,7 @@ async def websocket_endpoint(websocket: WebSocket):
     caller_phone = query_params.get("caller_phone", "")
     stream_sid = query_params.get("stream_sid", "")  # ✅ Talkdesk stream SID (for escalation stop message)
     interaction_id = query_params.get("interaction_id", "")  # ✅ Talkdesk interaction ID (for database tracking)
+    ivr_path = query_params.get("ivr_path", "")  # IVR queue path from Talkdesk (e.g. "1|3|2")
 
     logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     logger.info(f"New Healthcare Flow WebSocket Connection")
@@ -381,6 +376,7 @@ async def websocket_endpoint(websocket: WebSocket):
     logger.info(f"Caller Phone: {caller_phone or 'Not provided'}")
     logger.info(f"Stream SID: {stream_sid or 'Not provided'}")  # ✅ Talkdesk stream SID (for escalation)
     logger.info(f"Interaction ID: {interaction_id or 'Not provided'}")  # ✅ Talkdesk interaction ID
+    logger.info(f"IVR Path: {ivr_path or 'Not provided'}")
     logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
     # ✅ Validate business_status is provided
@@ -576,10 +572,12 @@ async def websocket_endpoint(websocket: WebSocket):
         flow_manager.state["session_id"] = session_id
         flow_manager.state["stream_sid"] = stream_sid  # ✅ Talkdesk stream SID for escalation
         flow_manager.state["interaction_id"] = interaction_id  # ✅ Talkdesk interaction ID for database
+        flow_manager.state["ivr_path"] = ivr_path  # IVR queue path (e.g. "1|3|2")
         logger.info(f"✅ Business status stored in flow state: {business_status}")
         logger.info(f"✅ Session ID stored in flow state: {session_id}")
         logger.info(f"✅ Stream SID stored in flow state: {stream_sid or 'Not provided'}")
         logger.info(f"✅ Interaction ID stored in flow state: {interaction_id or 'Not provided'}")
+        logger.info(f"✅ IVR path stored in flow state: {ivr_path or 'Not provided'}")
 
         # Store caller phone number in flow manager state
         if caller_phone:

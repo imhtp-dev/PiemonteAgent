@@ -850,18 +850,24 @@ async def _handle_transfer_escalation(flow_manager: FlowManager) -> None:
         logger.success("✅ Transfer analysis complete")
         logger.info(f"   Summary: {analysis['summary'][:100]}...")
 
-        # Determine sector for Talkdesk routing
-        sector = _determine_escalation_sector(flow_manager)
+        # Get queue_code from analysis (already resolved by analyze_for_transfer)
+        queue_code = analysis["queue_code"]
 
-        # Force service code for specific transfer types
-        service_code = analysis["service"]
+        # Override for specific transfer types (deterministic, don't trust LLM)
         transfer_reason = flow_manager.state.get("transfer_reason", "").lower()
         if any(phrase in transfer_reason for phrase in ["medicina sportiva", "visita sportiva", "certificato sportivo", "idoneità sportiva"]):
-            service_code = "4"  # Medicina dello sport
+            queue_code = "1|4"  # Medicina dello sport
         if flow_manager.state.get("transfer_type") == "previous_appointment_cancellation":
-            service_code = "5"  # Disdetta
+            queue_code = "1|5"  # Disdetta
 
-        logger.info(f"   Sector: {sector}, Service: {service_code}")
+        # Validate queue_code
+        from services.ivr_routing import is_valid_queue_code, resolve_fallback_queue
+        if not is_valid_queue_code(queue_code):
+            ivr_path = flow_manager.state.get("ivr_path", "")
+            sector = _determine_escalation_sector(flow_manager)
+            queue_code = resolve_fallback_queue(sector, ivr_path)
+
+        logger.info(f"   Queue Code: {queue_code}")
 
         # Get stream_sid for Talkdesk
         stream_sid = flow_manager.state.get("stream_sid", "")
@@ -874,10 +880,9 @@ async def _handle_transfer_escalation(flow_manager: FlowManager) -> None:
             sentiment=analysis["sentiment"],
             action="transfer",
             duration=str(analysis["duration_seconds"]),
-            service=service_code,
+            queue_code=queue_code,
             call_id=session_id,
             stream_sid=stream_sid,
-            sector=sector
         )
 
         # Store for later
