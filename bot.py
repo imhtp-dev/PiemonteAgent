@@ -10,9 +10,20 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 from loguru import logger
 
-# Enable Deepgram and WebSocket debuggings
-logging.getLogger("deepgram").setLevel(logging.DEBUG)
-logging.getLogger("websockets").setLevel(logging.DEBUG)
+# Suppress noisy framework internals
+logging.getLogger("deepgram").setLevel(logging.WARNING)
+logging.getLogger("websockets").setLevel(logging.WARNING)
+logging.getLogger("pipecat.processors.frame_processor").setLevel(logging.WARNING)
+logging.getLogger("pipecat.adapters").setLevel(logging.WARNING)
+logging.getLogger("pipecat.processors.aggregators").setLevel(logging.WARNING)
+logging.getLogger("pipecat.processors.metrics").setLevel(logging.WARNING)
+logging.getLogger("pipecat.services.openai.base_llm").setLevel(logging.WARNING)
+logging.getLogger("pipecat.services.llm_service").setLevel(logging.INFO)
+logging.getLogger("pipecat.pipeline").setLevel(logging.WARNING)
+logging.getLogger("pipecat.utils.tracing").setLevel(logging.WARNING)
+logging.getLogger("pipecat_flows.manager").setLevel(logging.INFO)
+logging.getLogger("pipecat_flows.actions").setLevel(logging.WARNING)
+logging.getLogger("pipecat_flows.adapters").setLevel(logging.WARNING)
 
 # FastAPI
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect

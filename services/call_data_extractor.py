@@ -155,7 +155,7 @@ class CallDataExtractor:
             "content": content,
             "timestamp": datetime.now().isoformat()
         })
-        logger.debug(f"📝 Transcript entry added: {role} - {content}")
+        pass  # Entry tracked
 
     def add_function_call(self, function_name: str, parameters: dict = None, result: dict = None):
         """Track function calls for analytics"""

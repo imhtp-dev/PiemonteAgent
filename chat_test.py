@@ -35,9 +35,23 @@ import os
 import sys
 import asyncio
 import argparse
+import logging
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 from loguru import logger
+
+# Suppress noisy framework internals
+logging.getLogger("pipecat.processors.frame_processor").setLevel(logging.WARNING)
+logging.getLogger("pipecat.adapters").setLevel(logging.WARNING)
+logging.getLogger("pipecat.processors.aggregators").setLevel(logging.WARNING)
+logging.getLogger("pipecat.processors.metrics").setLevel(logging.WARNING)
+logging.getLogger("pipecat.services.openai.base_llm").setLevel(logging.WARNING)
+logging.getLogger("pipecat.services.llm_service").setLevel(logging.INFO)
+logging.getLogger("pipecat.pipeline").setLevel(logging.WARNING)
+logging.getLogger("pipecat.utils.tracing").setLevel(logging.WARNING)
+logging.getLogger("pipecat_flows.manager").setLevel(logging.INFO)
+logging.getLogger("pipecat_flows.actions").setLevel(logging.WARNING)
+logging.getLogger("pipecat_flows.adapters").setLevel(logging.WARNING)
 
 # ============================================================================
 # TEST CONFIGURATION - Change these before running
@@ -163,7 +177,7 @@ class TextOutputProcessor(FrameProcessor):
                     "type": "assistant_message_chunk",
                     "text": text
                 })
-                logger.debug(f"📤 Sent text chunk to browser: {text[:50]}...")
+                pass  # Chunk sent
             except Exception as e:
                 logger.error(f"❌ Failed to send text chunk: {e}")
 
@@ -186,7 +200,7 @@ class TextOutputProcessor(FrameProcessor):
                     call_extractor_instance = self.flow_manager.state.get("call_extractor")
                     if call_extractor_instance:
                         call_extractor_instance.add_transcript_entry("assistant", self._buffer)
-                        logger.debug(f"📊 Added to call_extractor: assistant")
+                        pass  # Tracked
 
                 self._buffer = ""
             except Exception as e:
@@ -1199,7 +1213,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         call_extractor_instance = flow_manager.state.get("call_extractor")
                         if call_extractor_instance:
                             call_extractor_instance.add_transcript_entry("user", user_text)
-                            logger.debug(f"📊 Added to call_extractor: user")
+                            pass  # Tracked
 
                         # Send to pipeline
                         await text_transport.receive_text_message(user_text)

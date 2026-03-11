@@ -75,7 +75,6 @@ async def search_health_services_and_transition(args: FlowArgs, flow_manager: Fl
             limit
         )
         logger.info(f"✅ Search completed: found={search_result.found}, count={search_result.count}")
-        print(search_result)
 
         if search_result.found and search_result.services:
             # Store services in flow state

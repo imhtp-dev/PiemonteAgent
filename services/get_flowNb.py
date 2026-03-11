@@ -4,6 +4,7 @@
 ambiente="prod"
 import requests
 import json
+from loguru import logger
 from services.amb_json_flow_eng import recupera_amb_json_flow
 
 def get_token():
@@ -26,7 +27,7 @@ def get_token():
     if response.status_code == 200:
         token = response.json()['access_token']
     else:
-        print(f'Errore durante la richiesta: {response.status_code} - {response.text}')
+        logger.error(f'Token request failed: {response.status_code} - {response.text[:200]}')
     return token
 
 
@@ -64,7 +65,6 @@ def genera_flow(hc_uuid, medical_exam_id, gender="m", date_of_birth="19900811"):
         #print(formatted_json)
         #print(data)
         resp=data
-        print(resp)
         uuid = data['uuid']
         name = data['name']
         health_service_code = data['health_service_code']

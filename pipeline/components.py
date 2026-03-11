@@ -50,14 +50,13 @@ class AzureSTTServiceWithPhrases(AzureSTTService):
 
     def _on_handle_recognizing(self, event):
         """Override to add debug logging"""
-        logger.debug(f"🎤 Azure RECOGNIZING event: text='{event.result.text}'")
+        pass  # Recognizing event
         super()._on_handle_recognizing(event)
 
     async def run_stt(self, audio: bytes):
         """Override to track audio chunks"""
         self._audio_chunks_received += 1
-        if self._audio_chunks_received % 100 == 0:
-            logger.debug(f"🔊 Azure STT received {self._audio_chunks_received} audio chunks")
+        pass  # Chunk counted
         async for frame in super().run_stt(audio):
             yield frame
 

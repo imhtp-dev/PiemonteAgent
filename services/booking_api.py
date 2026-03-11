@@ -76,8 +76,8 @@ def create_booking(booking_data: Dict[str, Any]) -> Dict[str, Any]:
             "Authorization": f"Bearer {token}"
         }
 
-        logger.info(f"Creating booking at: {url}")
-        logger.debug(f"Booking data: {prepared_booking_data}")
+        logger.info(f"📡 BOOKING API: {url}")
+        logger.info(f"📡 BOOKING API payload: {prepared_booking_data}")
 
         # Make POST request
         response = requests.post(

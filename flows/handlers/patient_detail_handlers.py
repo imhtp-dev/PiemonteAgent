@@ -451,9 +451,9 @@ async def perform_booking_creation_and_transition(args: FlowArgs, flow_manager: 
 
         # Prepare booking data - ONLY UUID for existing patients, full details for new patients
         if patient_found_in_db and patient_db_id:
-            # Existing patient: API only needs UUID (backend has all patient info)
-            patient_data = {"uuid": patient_db_id}
-            logger.info(f"✅ Using simplified payload with patient UUID only: {patient_db_id}")
+            # Existing patient: UUID + phone (phone may have been updated by patient)
+            patient_data = {"uuid": patient_db_id, "phone": patient_phone}
+            logger.info(f"✅ Using existing patient UUID: {patient_db_id}, phone: {patient_phone}")
         else:
             # New patient: Send all required details
             patient_data = {

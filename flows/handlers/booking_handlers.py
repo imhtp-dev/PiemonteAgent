@@ -2677,13 +2677,9 @@ async def fetch_doctors_and_match(args: FlowArgs, flow_manager: FlowManager) -> 
         flow_manager.state["providing_entities"] = providing_entities
         logger.info(f"🩺 Got {len(providing_entities)} providing entities")
 
-        print(f"\n{'='*60}")
-        print(f"🩺 PROVIDING ENTITIES for '{requested_name}' at {selected_center.name}")
-        print(f"{'='*60}")
         for i, pe in enumerate(providing_entities, 1):
             prof = pe.get("professional", {})
-            print(f"  {i}. {prof.get('name', '')} {prof.get('surname', '')} (UUID: {pe.get('uuid', 'N/A')})")
-        print(f"{'='*60}\n")
+            logger.debug(f"  🩺 {i}. {prof.get('name', '')} {prof.get('surname', '')} (UUID: {pe.get('uuid', 'N/A')})")
 
         if not providing_entities:
             # No doctors at all for this date → let patient try different date or drop doctor preference

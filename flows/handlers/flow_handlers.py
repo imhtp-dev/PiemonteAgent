@@ -109,7 +109,7 @@ async def perform_silent_center_search_and_generate_flow(args: FlowArgs, flow_ma
                 if health_centers:
                     logger.success(f"✅ Found {len(health_centers)} centers at radius={radius_display}km")
                     for hc in health_centers:
-                        print(f"🏥 Center: {hc.name} | UUID: {hc.uuid} | Address: {getattr(hc, 'address', 'N/A')}")
+                        logger.debug(f"🏥 Center: {hc.name} | {hc.uuid}")
                     break
             except Exception as e:
                 logger.warning(f"⚠️ Center search failed at radius={radius_display}km: {e}")
@@ -141,15 +141,7 @@ async def perform_silent_center_search_and_generate_flow(args: FlowArgs, flow_ma
             from flows.nodes.booking import create_final_center_search_node
             return {"success": True, "message": "No flow generated, proceeding to center search"}, create_final_center_search_node()
 
-        # Print generated flow to terminal
-        print(f"\n{'='*60}")
-        print(f"📋 GENERATED FLOW for {primary_service.name}")
-        print(f"{'='*60}")
-        if isinstance(generated_flow, str):
-            print(generated_flow)
-        else:
-            print(json.dumps(generated_flow, indent=2, ensure_ascii=False))
-        print(f"{'='*60}\n")
+        logger.debug(f"📋 Generated flow for {primary_service.name}: {json.dumps(generated_flow, ensure_ascii=False)[:500]}")
 
         # Parse generated flow
         if isinstance(generated_flow, str):
@@ -158,12 +150,7 @@ async def perform_silent_center_search_and_generate_flow(args: FlowArgs, flow_ma
         # Prune nested nodes with empty list_health_services before LLM sees them
         generated_flow = prune_empty_flow_nodes(generated_flow)
 
-        # Print pruned flow to terminal
-        print(f"\n{'='*60}")
-        print(f"✂️ PRUNED FLOW for {primary_service.name}")
-        print(f"{'='*60}")
-        print(json.dumps(generated_flow, indent=4, ensure_ascii=False))
-        print(f"{'='*60}\n")
+        logger.info(f"✂️ Pruned flow for {primary_service.name}: {json.dumps(generated_flow, ensure_ascii=False)[:500]}")
 
         # Check if list_health_services is empty → skip flow navigation
         list_hs = generated_flow.get("list_health_services", [])

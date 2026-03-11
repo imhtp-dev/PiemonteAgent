@@ -30,7 +30,7 @@ def get_token():
     if response.status_code == 200:
         token = response.json()['access_token']
     else:
-        print(f'Error while requesting: {response.status_code} - {response.text}')
+        logger.error(f'❌ Token request failed: {response.status_code} - {response.text[:200]}')
     return token
 
 
@@ -70,53 +70,31 @@ def list_slot(health_center_uuid, date_search, uuid_exam, gender='m', date_of_bi
     if providing_entity:
         request_data['providing_entity'] = providing_entity
 
-    logger.info(f'🔍 SLOT API REQUEST: Making API request to: {api_url}')
-    logger.info(f'🔍 SLOT API REQUEST: Request params: {request_data}')
-    print(f'🔍 SLOT FETCH DEBUG: Making API request to: {api_url}')
-    print(f'🔍 SLOT FETCH DEBUG: Request params: {request_data}')
+    logger.info(f'🔍 SLOT API: {api_url}')
+    logger.info(f'🔍 SLOT API: params={request_data}')
 
     response = requests.get(api_url, headers=headers, params=request_data)
 
-    logger.info(f'🔍 SLOT API RESPONSE: Status {response.status_code}')
-    print(f'🔍 SLOT FETCH DEBUG: Response status: {response.status_code}')
+    logger.info(f'🔍 SLOT API: Status {response.status_code}')
 
     if response.status_code == 200:
         slots = response.json()
 
-        logger.info(f'🔍 SLOT API RESPONSE: Received {len(slots) if isinstance(slots, list) else 0} slots')
+        slot_count = len(slots) if isinstance(slots, list) else 0
+        logger.info(f'🔍 SLOT API: {slot_count} slots returned')
 
-        # Log first 3 slots with their health_services data
-        if isinstance(slots, list) and len(slots) > 0:
-            for i, slot in enumerate(slots[:3]):  # First 3 slots only
-                health_services = slot.get("health_services", [])
-                if health_services:
-                    service = health_services[0]
-                    logger.info(f'🔍 SLOT API RESPONSE: Slot {i+1} - Service: {service.get("name", "N/A")}, UUID: {service.get("uuid", "N/A")}, Price: {service.get("price", "N/A")}€, Cerba: {service.get("cerba_card_price", "N/A")}€')
-                else:
-                    logger.warning(f'🔍 SLOT API RESPONSE: Slot {i+1} - No health_services data!')
-
-        print(f'🔍 SLOT FETCH DEBUG: ===== FULL API RESPONSE =====')
-        print(f'🔍 SLOT FETCH DEBUG: Raw response: {slots}')
-        print(f'🔍 SLOT FETCH DEBUG: Response type: {type(slots)}')
-
+        # Log first 3 slots summary
         if isinstance(slots, list):
-            print(f'🔍 SLOT FETCH DEBUG: Number of slots returned: {len(slots)}')
-            for i, slot in enumerate(slots):
-                print(f'🔍 SLOT FETCH DEBUG: --- SLOT {i+1} ---')
-                print(f'🔍 SLOT FETCH DEBUG: Full slot data: {slot}')
-                print(f'🔍 SLOT FETCH DEBUG: start_time: {slot.get("start_time", "MISSING")}')
-                print(f'🔍 SLOT FETCH DEBUG: end_time: {slot.get("end_time", "MISSING")}')
-                print(f'🔍 SLOT FETCH DEBUG: providing_entity_availability_uuid: {slot.get("providing_entity_availability_uuid", "MISSING")}')
-                print(f'🔍 SLOT FETCH DEBUG: health_services: {slot.get("health_services", "MISSING")}')
-        else:
-            print(f'🔍 SLOT FETCH DEBUG: Response is not a list: {slots}')
+            for i, slot in enumerate(slots[:3]):
+                hs = slot.get("health_services", [])
+                if hs:
+                    s = hs[0]
+                    logger.debug(f'  Slot {i+1}: {s.get("name", "N/A")} | {s.get("price", "N/A")}€ | Cerba: {s.get("cerba_card_price", "N/A")}€')
 
-        print(f'🔍 SLOT FETCH DEBUG: ===== END RESPONSE =====')
-        return slots  # Return the slots data
+        return slots
     else:
-        logger.error(f'🔍 SLOT API ERROR: Status {response.status_code} - {response.text}')
-        print(f'🔍 SLOT FETCH DEBUG: ❌ API Error: {response.status_code} - {response.text}')
-        return []  # Return empty list on error
+        logger.error(f'❌ SLOT API: Status {response.status_code} - {response.text[:200]}')
+        raise Exception(f"Slot API returned {response.status_code}: {response.text[:200]}")
 
 
 @trace_sync_call("api.slot_create")
@@ -147,16 +125,11 @@ def create_slot(start_slot,end_slot,pea):
         'providing_entity_availability':pea # unique identifier of the availability
     }
 
-    # LOG REQUEST DETAILS
-    logger.info(f'🔍 SLOT CREATE REQUEST: Making API request to: {api_url}')
-    logger.info(f'🔍 SLOT CREATE REQUEST: Request data: {request_data}')
-    logger.info(f'🔍 SLOT CREATE REQUEST: PEA: {pea}')
-    logger.info(f'🔍 SLOT CREATE REQUEST: Start: {start_slot}, End: {end_slot}')
+    logger.info(f'🔍 SLOT CREATE: PEA={pea}, {start_slot} → {end_slot}')
 
     response = requests.post(api_url, headers=headers, json=request_data)
 
-    # LOG RESPONSE
-    logger.info(f'🔍 SLOT CREATE RESPONSE: Status {response.status_code}')
+    logger.info(f'🔍 SLOT CREATE: Status {response.status_code}')
 
     uuid_slot=""
     crea_at=""
@@ -187,9 +160,9 @@ def delete_slot(slot_uuid):
         'Authorization': f'Bearer {token}',
         'Content-Type': 'application/json',
     }
+    logger.info(f'🔍 SLOT DELETE: UUID={slot_uuid}')
     response = requests.delete(api_url, headers=headers)
-    uuid_slot=""
-    upd_at=""
+    logger.info(f'🔍 SLOT DELETE: Status {response.status_code}')
     return response
 
 
