@@ -573,8 +573,8 @@ def create_slot_selection_node(slots: List[Dict], service: HealthService, is_cer
         end_time_24h = end_dt.strftime("%-H:%M")
 
         # Extract doctor name from providing_entity.professional
-        providing_entity = slot.get('providing_entity', {})
-        professional = providing_entity.get('professional', {})
+        providing_entity = slot.get('providing_entity') or {}
+        professional = providing_entity.get('professional') or {}
         doctor_name = f"{professional.get('name', '')} {professional.get('surname', '')}".strip()
 
         # Extract price from health_services
@@ -590,7 +590,7 @@ def create_slot_selection_node(slots: List[Dict], service: HealthService, is_cer
             'start_dt': start_dt,
             'end_dt': end_dt,
             'providing_entity_availability_uuid': slot.get('providing_entity_availability_uuid', ''),
-            'health_center_name': slot.get('health_center', {}).get('name', ''),
+            'health_center_name': (slot.get('health_center') or {}).get('name', ''),
             'service_name': health_services[0].get('name', service.name) if health_services else service.name,
             'doctor_name': doctor_name,
             'price': slot_price,

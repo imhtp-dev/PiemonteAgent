@@ -30,7 +30,7 @@ def _get_doctor_display_name(flow_manager: FlowManager) -> str:
     doctor = flow_manager.state.get("selected_providing_entity")
     if not doctor:
         return ""
-    prof = doctor.get("professional", {})
+    prof = doctor.get("professional") or {}
     return f"{prof.get('name', '')} {prof.get('surname', '')}".strip()
 
 
@@ -1105,7 +1105,7 @@ async def search_slots_and_transition(args: FlowArgs, flow_manager: FlowManager)
         }, create_error_node("Slot search failed. Please try again.")
 
 
-async def retry_slot_selection_handler(flow_manager, args):
+async def retry_slot_selection_handler(args: FlowArgs, flow_manager: FlowManager):
     """Go back to slot search from booking_error, preserving patient/center state"""
     logger.info("🔄 Retrying slot selection from booking_error — clearing slot state only")
     for key in ["available_slots", "cached_all_slots", "cached_search_params",
@@ -2618,7 +2618,7 @@ def _fuzzy_match_doctor(requested_name: str, doctors: List[Dict]) -> List[Dict]:
     requested_lower = requested_name.lower().strip()
 
     for doc in doctors:
-        prof = doc.get("professional", {})
+        prof = doc.get("professional") or {}
         first_name = (prof.get("name") or "").lower()
         surname = (prof.get("surname") or "").lower()
         full_name = f"{first_name} {surname}".strip()
@@ -2678,7 +2678,7 @@ async def fetch_doctors_and_match(args: FlowArgs, flow_manager: FlowManager) -> 
         logger.info(f"🩺 Got {len(providing_entities)} providing entities")
 
         for i, pe in enumerate(providing_entities, 1):
-            prof = pe.get("professional", {})
+            prof = pe.get("professional") or {}
             logger.debug(f"  🩺 {i}. {prof.get('name', '')} {prof.get('surname', '')} (UUID: {pe.get('uuid', 'N/A')})")
 
         if not providing_entities:
@@ -2763,8 +2763,8 @@ async def _search_slots_with_doctor(flow_manager: FlowManager) -> Tuple[Dict[str
 
     tts_service = flow_manager.state.get("tts_service")
     if tts_service:
-        doctor = flow_manager.state.get("selected_providing_entity", {})
-        prof = doctor.get("professional", {})
+        doctor = flow_manager.state.get("selected_providing_entity") or {}
+        prof = doctor.get("professional") or {}
         doctor_display = f"{prof.get('name', '')} {prof.get('surname', '')}".strip()
         await tts_service.queue_frame(TTSSpeakFrame(f"Cerco gli appuntamenti con il Dottor {doctor_display}. Attendi un momento."))
 

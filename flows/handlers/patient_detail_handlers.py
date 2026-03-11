@@ -14,7 +14,7 @@ def _get_doctor_display_name(flow_manager: FlowManager) -> str:
     doctor = flow_manager.state.get("selected_providing_entity")
     if not doctor:
         return ""
-    prof = doctor.get("professional", {})
+    prof = doctor.get("professional") or {}
     return f"{prof.get('name', '')} {prof.get('surname', '')}".strip()
 
 
