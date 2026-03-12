@@ -451,13 +451,14 @@ async def global_request_transfer(
         flow_manager.state["transfer_reason"] = reason
         flow_manager.state["transfer_timestamp"] = str(asyncio.get_event_loop().time())
 
-        # PATH 1: IMMEDIATE — agent cannot help (sports medicine, lab)
+        # PATH 1: IMMEDIATE — agent cannot help (sports medicine, lab, fondi)
         if immediate:
             logger.info(f"🚫 Immediate transfer — capability limitation: {reason[:50]}")
             flow_manager.state["transfer_requested"] = True
             flow_manager.state["transfer_type"] = "capability_limitation"
 
-            await _handle_transfer_escalation(flow_manager)
+            # Run escalation in background — transfer node pre_actions TTS plays immediately
+            asyncio.create_task(_handle_transfer_escalation(flow_manager))
 
             from flows.nodes.transfer import create_transfer_node
             return {
@@ -474,7 +475,8 @@ async def global_request_transfer(
             flow_manager.state["transfer_requested"] = True
             flow_manager.state["transfer_type"] = "patient_insistence"
 
-            await _handle_transfer_escalation(flow_manager)
+            # Run escalation in background — transfer node pre_actions TTS plays immediately
+            asyncio.create_task(_handle_transfer_escalation(flow_manager))
 
             from flows.nodes.transfer import create_transfer_node
             return {
@@ -497,7 +499,7 @@ async def global_request_transfer(
     except Exception as e:
         logger.error(f"❌ Transfer request error: {e}")
         from flows.nodes.transfer import create_transfer_node
-        await _handle_transfer_escalation(flow_manager)
+        asyncio.create_task(_handle_transfer_escalation(flow_manager))
         return {
             "success": True,
             "reason": "error in transfer request",
