@@ -149,7 +149,7 @@ GLOBAL_FUNCTIONS = [
     # 7. Request Transfer
     FlowsFunctionSchema(
         name="request_transfer",
-        description="Transfer to human operator. Set immediate=true ONLY for capability limitations (sports medicine, laboratorio). For generic 'transfer me' requests, set immediate=false — agent will try to help first.",
+        description="Transfer to human operator. Set immediate=true for capability limitations: sports medicine, laboratorio, fondi/assicurazioni bookings, diagnostica con fondi. For generic 'transfer me' requests, set immediate=false — agent will try to help first.",
         properties={
             "reason": {
                 "type": "string",
@@ -157,7 +157,7 @@ GLOBAL_FUNCTIONS = [
             },
             "immediate": {
                 "type": "boolean",
-                "description": "true = agent cannot help (sports medicine, lab) → transfer now. false = patient just wants operator → try to help first."
+                "description": "true = agent cannot help (sports medicine, lab, fondi/assicurazioni) → transfer now. false = patient just wants operator → try to help first."
             }
         },
         required=["reason", "immediate"],

@@ -35,9 +35,9 @@ def create_router_node(reset_context: bool = False, business_status: str = "open
 - You CANNOT transfer calls to operators — the call center is closed.
 - Do NOT offer or propose transfers. Do NOT say "Vuoi che ti trasferisca a un operatore".
 - If patient asks for transfer: "Mi dispiace, il call center è attualmente chiuso. Non posso trasferirla a un operatore in questo momento."
-- If patient asks for sports medicine / laboratorio: "Mi dispiace, la prenotazione per questo servizio richiede un operatore, ma il call center è attualmente chiuso. La invito a richiamare durante gli orari di apertura."
+- If patient asks for sports medicine / laboratorio / fondi-assicurazioni / cancel-reschedule: "Mi dispiace, la prenotazione per questo servizio richiede un operatore, ma il call center è attualmente chiuso. La invito a richiamare durante gli orari di apertura."
 - If patient wants to cancel/reschedule a previous appointment: "Mi dispiace, per disdire o spostare un appuntamento serve un operatore, ma il call center è chiuso. La invito a richiamare durante gli orari di apertura."
-- You CAN still: answer info questions, provide pricing, check exams, check clinic hours, and start bookings (poliambulatorio/radiologia).
+- You CAN still: answer info questions, provide pricing, check exams, check clinic hours, and start bookings for prestazioni PRIVATE (poliambulatorio privato e diagnostica per immagini privato).
 """
     else:
         transfer_status_prompt = """
@@ -85,15 +85,24 @@ If patient mentions ONLY a doctor's name without a service (e.g., "voglio prenot
 IMPORTANT: If NO doctor name is mentioned, call start_booking IMMEDIATELY without doctor_name. Never ask "do you have a doctor preference?" — only capture doctor_name if the patient volunteers it.
 Extract ONLY the doctor's name (surname, or first+last if given). Strip titles like "Dottor", "Dottoressa", "Dr.", "Dr.ssa".
 
-🚫 **SPORTS MEDICINE EXCEPTION (CRITICAL):**
-If patient wants to book a SPORTS MEDICINE visit (visita sportiva, medicina dello sport, certificato sportivo, idoneità sportiva, visita agonistica, visita non agonistica, certificato medico sportivo), DO NOT use start_booking. Instead:
-1. Say: "Mi dispiace, la prenotazione per visite di medicina sportiva non è disponibile tramite questo servizio automatico."
+🚫 **SERVICES THAT REQUIRE HUMAN OPERATOR (CRITICAL):**
+Our agent can ONLY book: poliambulatorio privato (visite, ecografie, ambulatoriali) and diagnostica per immagini privato (RX, TAC, RMN, MOC, mammografie).
+For ALL other services below, DO NOT use start_booking. Instead escalate:
+
+1. **LABORATORIO** (prelievi, analisi sangue, analisi urine, esami del sangue) → queue 1|1
+2. **FONDI / ASSICURAZIONI** (if patient mentions: assicurazione, fondi, fondo sanitario, convenzione, mutua, cassa malattia, polizza, "con l'assicurazione", "tramite fondi", "ho una convenzione") → queue 1|2|1
+3. **DIAGNOSTICA CON FONDI** (RX/TAC/RMN/MOC/mammografia + assicurazione/fondi) → queue 1|3|2
+4. **MEDICINA DELLO SPORT** (visita sportiva, medicina dello sport, certificato sportivo, idoneità sportiva, visita agonistica, visita non agonistica, certificato medico sportivo) → queue 1|4
+5. **DISDETTA / SPOSTAMENTO** (annullare, disdire, spostare un appuntamento già prenotato) → queue 1|5 (handled by cancel_previous_appointment)
+
+For cases 1-4:
+1. Say: "Mi dispiace, la prenotazione per questo servizio non è disponibile tramite questo servizio automatico."
 2. Ask: "Vuoi che ti trasferisca a un operatore umano che potrà aiutarti?" (ONLY if call center is OPEN)
-3. If they say yes → call request_transfer with immediate=true
-4. If they say no → ask how else you can help
+3. If yes → call request_transfer with immediate=true
+4. If no → ask how else you can help
 
 🔄 **TRANSFER RULES (CRITICAL):**
-- Sports medicine / laboratorio / capability limitation → request_transfer(immediate=true) — agent CANNOT help
+- Laboratorio / fondi-assicurazioni / sports medicine / capability limitation → request_transfer(immediate=true) — agent CANNOT help
 - Patient just says "trasferiscimi" / "voglio un operatore" → request_transfer(immediate=false) — agent tries to help first
 
 {settings.language_config}"""
@@ -120,8 +129,8 @@ If patient wants to book a SPORTS MEDICINE visit (visita sportiva, medicina dell
 - "Come devo prepararmi?" → call knowledge_base_new(query="preparazione")
 
 **FOR BOOKING:**
-- "Voglio prenotare" → call start_booking
-- ⚠️ EXCEPTION: If booking is for SPORTS MEDICINE (visita sportiva, medicina dello sport, certificato sportivo, idoneità sportiva) → DO NOT call start_booking. Say sports medicine booking is not available via this service and ask if they want transfer to human operator. If yes → request_transfer(immediate=true).
+- "Voglio prenotare" → call start_booking (ONLY for poliambulatorio privato or diagnostica per immagini privato)
+- ⚠️ ESCALATE INSTEAD OF BOOKING for: laboratorio (prelievi, analisi sangue), fondi/assicurazioni (any mention of assicurazione, fondi, convenzione, mutua, polizza), sports medicine (visita sportiva, certificato sportivo, idoneità sportiva), diagnostica con fondi. Say the service is not available via automated system, ask if they want transfer → request_transfer(immediate=true).
 - 🩺 DOCTOR NAME: If user names a doctor ("con Dottor/Dottoressa [name]") → call start_booking(service_request="...", doctor_name="[name without title]"). If only doctor name without service → ask which service first, then call start_booking with both. Never ask about doctor preference if not mentioned.
 
 **MULTI-SERVICE BOOKING:**
@@ -141,7 +150,7 @@ Example: "RX caviglia destra e RX avampiede destro" → service_request="RX cavi
 
 **FOR TRANSFER:**
 - "Vorrei parlare con un operatore" → call request_transfer(immediate=false) — agent tries to help first
-- Sports medicine / lab capability limitation → call request_transfer(immediate=true) — transfer now
+- Laboratorio / fondi-assicurazioni / sports medicine / capability limitation → call request_transfer(immediate=true) — transfer now
 
 **RULES:**
 - NEVER answer without calling a function first
