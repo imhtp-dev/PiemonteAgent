@@ -1,7 +1,7 @@
 """
 IVR Queue Routing — Maps patient intent to Talkdesk queue codes.
 
-Talkdesk IVR only routes TASTO 1.3.1 and 1.3.2 (diagnostic imaging) to our agent.
+Talkdesk IVR routes TASTO 1.2.2 (poli privato) and 1.3.2 (diagnostica privato) to our agent.
 All other IVR paths go directly to human operator queues.
 
 On escalation, the agent must send the correct queue code based on patient intent:
@@ -12,8 +12,7 @@ Booking queues (from IVR tree):
   1|1     Laboratorio (prelievi, analisi sangue)
   1|2|1   Poli — fondi/assicurazioni (visite, ecografie, ambulatoriali)
   1|2|2   Poli — privato
-  1|3|1   Diagnostica immagini — fondi (RX, TAC, RMN, MOC, Mammografie)
-  1|3|2   Diagnostica immagini — privato
+  1|3|2   Diagnostica immagini — privato (RX, TAC, RMN, MOC, Mammografie)
   1|4     Medicina dello sport
   1|5     Disdetta/Spostare appuntamento
 
@@ -31,9 +30,8 @@ from typing import List
 BOOKING_QUEUES = {
     "1|1",      # Laboratorio
     "1|2|1",    # Poli fondi
-    "1|2|2",    # Poli privato
-    "1|3|1",    # Diagnostica fondi
-    "1|3|2",    # Diagnostica privato
+    "1|2|2",    # Poli privato (★ routed to our agent)
+    "1|3|2",    # Diagnostica privato (★ routed to our agent)
     "1|4",      # Sport
     "1|5",      # Disdetta
 }
@@ -51,7 +49,7 @@ ALL_VALID_QUEUES = BOOKING_QUEUES | INFO_QUEUES
 
 # Default fallbacks
 DEFAULT_INFO_QUEUE = "2|2|5"
-DEFAULT_BOOKING_QUEUE = "1|3|2"  # Our agent's primary scope (diagnostic imaging private)
+DEFAULT_BOOKING_QUEUE = "1|3|2"  # Our agent handles 1|2|2 (poli privato) and 1|3|2 (diagnostica privato)
 
 
 def is_valid_queue_code(code: str) -> bool:
@@ -83,10 +81,7 @@ def resolve_booking_queue_from_keywords(functions_called: List[str], ivr_path: s
         if any(kw in f for kw in ["lab", "blood", "prelievo"]):
             return "1|1"
         if any(kw in f for kw in ["rmn", "rx", "tac", "moc", "mammograf", "radiolog", "imaging"]):
-            # Preserve fondi/privato from original IVR selection if available
-            if ivr_path in ("1|3|1", "1|3|2"):
-                return ivr_path
-            return "1|3|2"  # Default privato
+            return "1|3|2"  # Diagnostica privato
         if any(kw in f for kw in ["visit", "ecograf", "ambulat", "price", "booking"]):
             return "1|2|2"  # Can't determine fondi vs privato → default privato
     # No keyword match → use original ivr_path or default

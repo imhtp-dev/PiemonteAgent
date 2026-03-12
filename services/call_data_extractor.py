@@ -399,12 +399,11 @@ Analyze the transcript and classify the call.
     - 1|1    → Laboratorio (prelievi, analisi sangue)
     - 1|2|1  → Visite/Ecografie/Ambulatoriali con fondi e assicurazioni
     - 1|2|2  → Visite/Ecografie/Ambulatoriali in regime Privato
-    - 1|3|1  → Diagnostica immagini (RX, TAC, RMN, MOC, Mammografie) con fondi/assicurazioni
-    - 1|3|2  → Diagnostica immagini in regime Privato
+    - 1|3|2  → Diagnostica immagini (RX, TAC, RMN, MOC, Mammografie) in regime Privato
     - 1|4    → Medicina dello sport
     - 1|5    → Disdetta/Spostare appuntamento già prenotato
-  To decide fondi vs privato: if patient mentioned insurance/fund/assicurazione/fondo/convenzione → fondi (x|x|1), otherwise → privato (x|x|2).
-  If unsure between fondi and privato, use the original IVR path: {ivr_path}
+  Note: Our agent handles 1|2|2 and 1|3|2. For fondi/assicurazioni use 1|2|1 (poli) — these get routed to human operators.
+  If unsure, use the original IVR path: {ivr_path}
 - PATIENT_INTENT: Brief description (max 100 chars)
 - SUMMARY: Max 250 characters
 
