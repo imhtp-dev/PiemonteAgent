@@ -346,6 +346,8 @@ def create_cerba_membership_node() -> NodeConfig:
 
 CRITICAL: When user responds YES or NO, you MUST call check_cerba_membership function with is_cerba_member=true or is_cerba_member=false.
 
+🚫 PRICE QUESTIONS: If the patient asks about the price/cost, tell them the price will be shown in the booking summary RIGHT AFTER this step. The Cerba Card affects the final price, so they need to answer first. Do NOT call check_service_price, get_competitive_pricing, or any pricing function — just answer verbally and ask again about the Cerba Card.
+
 If the patient says they want to change the date, time, or any booking detail:
 - Reassure them that they will be able to change the date/time in the NEXT step where we show a booking summary
 - But FIRST they need to answer if they have a Cerba Card or not, because it affects the pricing shown in the summary
