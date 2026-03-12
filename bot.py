@@ -564,8 +564,9 @@ async def websocket_endpoint(websocket: WebSocket):
         # Store TTS service ref for direct queue_frame in handlers (bypasses pipeline source)
         flow_manager.state["tts_service"] = tts
 
-        # Link node-aware mute strategy to flow state (must be after flow_manager creation)
+        # Link node-aware mute strategy to flow state and flow manager (must be after flow_manager creation)
         node_mute_strategy.set_flow_state(flow_manager.state)
+        node_mute_strategy.set_flow_manager(flow_manager)
 
         # ✅ Store business_status, session_id, and stream_sid in flow manager state
         flow_manager.state["business_status"] = business_status

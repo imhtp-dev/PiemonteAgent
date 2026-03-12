@@ -499,8 +499,9 @@ class DailyHealthcareFlowTester:
         # Store TTS service ref for direct queue_frame in handlers (bypasses pipeline source)
         self.flow_manager.state["tts_service"] = tts
 
-        # Link node-aware mute strategy to flow state (must be after flow_manager creation)
+        # Link node-aware mute strategy to flow state and flow manager (must be after flow_manager creation)
         node_mute_strategy.set_flow_state(self.flow_manager.state)
+        node_mute_strategy.set_flow_manager(self.flow_manager)
 
         # Store business_status, session_id, and stream_sid in flow manager state (required for info agent)
         self.flow_manager.state["business_status"] = TEST_BUSINESS_STATUS

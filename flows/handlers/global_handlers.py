@@ -623,7 +623,7 @@ async def global_start_booking(
         flow_manager.state["current_agent"] = "booking"
 
         # Doctor-specific booking mode
-        doctor_name = args.get("doctor_name", "").strip()
+        doctor_name = (args.get("doctor_name") or "").strip()
         if doctor_name:
             flow_manager.state["doctor_booking_mode"] = True
             flow_manager.state["requested_doctor_name"] = doctor_name
@@ -631,7 +631,7 @@ async def global_start_booking(
 
         # Store additional service request if patient mentioned two services
         # When doctor_booking_mode, ignore additional service (single-service only)
-        additional = args.get("additional_service_request", "").strip()
+        additional = (args.get("additional_service_request") or "").strip()
         if additional and not flow_manager.state.get("doctor_booking_mode"):
             flow_manager.state["pending_additional_request"] = additional
             logger.info(f"📋 Stored additional service request: {additional}")
