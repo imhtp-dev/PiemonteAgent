@@ -3113,6 +3113,8 @@ def _build_doctor_match_result(doctor_name: str, best: dict, slots: list, flow_m
     filtered = [s for s in slots if _slot_doctor_full_name(s) == matched_name]
 
     flow_manager.state["available_slots"] = filtered
+    # Clear stale slot_cache — old cache has unfiltered slots with wrong UUID mappings
+    flow_manager.state["slot_cache"] = {}
     logger.info(f"👨‍⚕️ Doctor filter: matched '{doctor_name}' → '{matched_name}' (score {best['score']}), {len(filtered)} slots")
 
     from flows.nodes.booking import create_slot_selection_node
@@ -3128,5 +3130,5 @@ def _build_doctor_match_result(doctor_name: str, best: dict, slots: list, flow_m
         is_cerba_member=flow_manager.state.get("is_cerba_member", False),
         user_preferred_date=flow_manager.state.get("preferred_date"),
         time_preference=flow_manager.state.get("time_preference", "any time"),
-        slot_cache=flow_manager.state.setdefault("slot_cache", {})
+        slot_cache=flow_manager.state["slot_cache"]
     )
