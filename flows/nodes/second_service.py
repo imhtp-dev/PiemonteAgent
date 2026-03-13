@@ -52,19 +52,24 @@ def create_second_service_selection_node(services: List[HealthService], search_t
     )
 
     top_services = services[:3]
-    service_options = "\n".join([service.name for service in top_services])
+    service_lines = []
+    for service in top_services:
+        service_lines.append(f"- {service.name} (uuid: {service.uuid})")
+    service_options = "\n".join(service_lines)
 
-    task_content = f"""I found these services for '{search_term}':
+    task_content = f"""Patient asked for: "{search_term}"
 
+Search results (ranked by relevance, best match first):
 {service_options}
 
-Choose one of these services, or tell me 'say the full service name' if none of these match what you're looking for."""
+🎯 AUTO-SELECT RULE: If the #1 result clearly matches what the patient asked for (same service, just minor wording/formatting differences like parentheses, capitalization, word order), call select_service IMMEDIATELY with its UUID — do NOT ask the patient to choose.
+Only present options to the patient if you're genuinely unsure which service they want."""
 
     return NodeConfig(
         name="second_service_selection",
         role_messages=[{
             "role": "system",
-            "content": f"The patient's first service has already been booked. Now help them choose from the search results for their second service. **CRITICAL: NEVER use 1., 2., 3., or numbers when listing services.** Speak naturally like a human. {settings.language_config}"
+            "content": f"The patient's first service has already been booked. Now help them choose from the search results for their second service. **CRITICAL: NEVER use 1., 2., 3., or numbers when listing services.** Speak naturally like a human. 🔇 SILENT FUNCTION CALLS: When calling select_service or refine_search, call it IMMEDIATELY with NO preceding text. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",

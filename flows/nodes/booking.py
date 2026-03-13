@@ -30,6 +30,7 @@ from flows.handlers.booking_handlers import (
     handle_radius_expansion_response,
     skip_current_service_handler,
     handle_get_price_info,
+    filter_slots_by_doctor,
 )
 from config.settings import settings
 from utils.italian_time import time_to_italian_words
@@ -1025,6 +1026,8 @@ Ask the user which time works best for them."""
 
 🔍 DIFFERENT DATE: If the patient wants a date NOT listed in the available dates above, ALWAYS call search_different_date with the requested date. NEVER say there are no slots without searching first.
 
+👨‍⚕️ DOCTOR FILTER: If the patient mentions ANY doctor name (e.g., "Voglio il Dott. Rossi", "con Dr Gianna", "preferisco Bianchi"), you MUST call filter_by_doctor immediately. NEVER respond with text asking for clarification — ALWAYS call the function and let the system handle matching. Pass just the name/surname without titles (Dott., Dr., Dottoressa). The system automatically searches multiple date ranges if the doctor is not found in current slots — no need to call search_different_date manually. If result says match_type="not_available", the doctor is definitively not available at this center — tell the patient directly.
+
 {settings.language_config}"""
     else:
         # DATE SELECTION MODE — patient needs to pick a date first
@@ -1128,6 +1131,18 @@ RULES:
                     }
                 },
                 required=["preferred_date"]
+            ),
+            FlowsFunctionSchema(
+                name="filter_by_doctor",
+                handler=filter_slots_by_doctor,
+                description="Filter available slots by a specific doctor name when patient requests a particular doctor",
+                properties={
+                    "doctor_name": {
+                        "type": "string",
+                        "description": "Doctor name requested by patient (e.g., 'Rossi', 'Dott. Giovanni Rossi')"
+                    }
+                },
+                required=["doctor_name"]
             )
         ]
     )

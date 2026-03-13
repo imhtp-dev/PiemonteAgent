@@ -2606,6 +2606,57 @@ async def skip_current_service_handler(args: FlowArgs, flow_manager: FlowManager
 # DOCTOR-SPECIFIC BOOKING HANDLERS
 # ============================================================================
 
+
+def _extract_unique_doctors_from_slots(slots: List[Dict]) -> List[Dict]:
+    """Extract unique doctors from raw API slots.
+    Returns: [{name, surname, full_name, slot_count}]
+    """
+    doctors = {}  # keyed by "name surname"
+    for i, slot in enumerate(slots):
+        pe = slot.get("providing_entity") or {}
+        prof = pe.get("professional") or {}
+        name = (prof.get("name") or "").strip()
+        surname = (prof.get("surname") or "").strip()
+        full = f"{name} {surname}".strip()
+        # Log every slot's raw providing_entity data
+        logger.debug(f"👨‍⚕️ Slot {i}: providing_entity={pe}, extracted='{full}'")
+        if full and full not in doctors:
+            doctors[full] = {"name": name, "surname": surname, "full_name": full, "slot_count": 0}
+        if full:
+            doctors[full]["slot_count"] += 1
+    logger.info(f"👨‍⚕️ Extracted {len(doctors)} unique doctors from {len(slots)} slots:")
+    for doc in doctors.values():
+        logger.info(f"   - {doc['full_name']} ({doc['slot_count']} slots)")
+    return list(doctors.values())
+
+
+def _fuzzy_match_doctor_in_slots(requested_name: str, doctors: List[Dict]) -> List[Dict]:
+    """Fuzzy match against doctors extracted from slots.
+    Returns ALL doctors with their scores, sorted descending.
+    """
+    from rapidfuzz import fuzz
+    requested_lower = requested_name.lower().strip()
+    results = []
+    for doc in doctors:
+        name_score = fuzz.partial_ratio(requested_lower, doc["name"].lower())
+        surname_score = fuzz.partial_ratio(requested_lower, doc["surname"].lower())
+        full_score = fuzz.partial_ratio(requested_lower, doc["full_name"].lower())
+        best_score = max(name_score, surname_score, full_score)
+        logger.debug(f"👨‍⚕️ Fuzzy '{requested_lower}' vs '{doc['full_name']}': name={name_score}, surname={surname_score}, full={full_score} → best={best_score}")
+        results.append({**doc, "score": best_score})
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results
+
+
+def _slot_doctor_full_name(slot: Dict) -> str:
+    """Extract full doctor name from a raw API slot."""
+    pe = slot.get("providing_entity") or {}
+    prof = pe.get("professional") or {}
+    name = (prof.get("name") or "").strip()
+    surname = (prof.get("surname") or "").strip()
+    return f"{name} {surname}".strip()
+
+
 def _fuzzy_match_doctor(requested_name: str, doctors: List[Dict]) -> List[Dict]:
     """Fuzzy match requested doctor name against providing-entity results.
 
@@ -2890,3 +2941,192 @@ async def handle_get_price_info(args: FlowArgs, flow_manager: FlowManager) -> Di
 
     logger.info(f"💰 Price info requested: {price_info}")
     return {"success": True, **price_info}
+
+
+def _get_current_service_info(flow_manager: FlowManager):
+    """Get current service, uuid_exam list, and service name from flow state."""
+    current_group_index = flow_manager.state.get("current_group_index", 0)
+    service_groups = flow_manager.state.get("service_groups", [])
+    selected_services = flow_manager.state.get("selected_services", [])
+
+    if service_groups and current_group_index < len(service_groups):
+        current_group = service_groups[current_group_index]
+        current_group_services = current_group["services"]
+        uuid_exam = [svc.uuid for svc in current_group_services]
+        current_service = current_group_services[0]
+    else:
+        current_service_index = flow_manager.state.get("current_service_index", 0)
+        current_service = selected_services[current_service_index] if selected_services else None
+        uuid_exam = [current_service.uuid] if current_service else []
+
+    return current_service, uuid_exam
+
+
+def _try_match_doctor_in_slots(doctor_name: str, slots: list):
+    """Try fuzzy matching doctor in slots. Returns (match_type, best, unique_doctors, scored)."""
+    unique_doctors = _extract_unique_doctors_from_slots(slots)
+    if not unique_doctors:
+        return "no_doctors", None, [], []
+
+    scored = _fuzzy_match_doctor_in_slots(doctor_name, unique_doctors)
+    best = scored[0] if scored else None
+
+    if best and best["score"] >= 80:
+        return "match", best, unique_doctors, scored
+    elif best and best["score"] >= 75:
+        return "partial", best, unique_doctors, scored
+    else:
+        return "not_found", best, unique_doctors, scored
+
+
+async def filter_slots_by_doctor(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
+    """Filter available slots by a specific doctor name requested by the patient.
+
+    Uses fuzzy matching with 3 tiers:
+    - >= 80: Auto-match, filter slots, return new slot_selection node
+    - 75-79: Suggest closest match, stay on same node
+    - < 75: No match — automatically searches up to 2 more date ranges.
+             If still not found, returns definitive "doctor not available".
+    """
+    MAX_AUTO_SEARCHES = 2
+
+    try:
+        doctor_name = (args.get("doctor_name") or "").strip()
+        if not doctor_name:
+            return {"success": False, "message": "No doctor name provided."}, None
+
+        available_slots = flow_manager.state.get("available_slots", [])
+        if not available_slots:
+            return {"success": False, "message": "No slots currently available."}, None
+
+        current_service, uuid_exam = _get_current_service_info(flow_manager)
+        if not current_service:
+            return {"success": False, "message": "Service information not found."}, None
+
+        selected_center = flow_manager.state.get("selected_center")
+        if not selected_center:
+            return {"success": False, "message": "Health center information not found."}, None
+
+        # --- First try: match in current slots ---
+        match_type, best, unique_doctors, scored = _try_match_doctor_in_slots(doctor_name, available_slots)
+
+        if match_type == "match":
+            return _build_doctor_match_result(doctor_name, best, available_slots, flow_manager, current_service)
+
+        if match_type == "partial":
+            logger.info(f"👨‍⚕️ Doctor filter: partial match '{doctor_name}' → '{best['full_name']}' (score {best['score']})")
+            return {
+                "success": False,
+                "match_type": "partial",
+                "suggested_doctor": best["full_name"],
+                "message": f"Doctor '{doctor_name}' not found. Closest match: {best['full_name']}. Ask patient to confirm."
+            }, None
+
+        # --- Not found: auto-search next date ranges ---
+        # Remember original date's doctors (these are the ones in current state)
+        original_doctor_names = [d["full_name"] for d in unique_doctors]
+        original_date = sorted(set(s["start_time"][:10] for s in available_slots))
+        original_date_display = original_date[0] if original_date else ""
+
+        all_searched_doctors = {d["full_name"] for d in unique_doctors}
+        dates = list(original_date)
+
+        for attempt in range(1, MAX_AUTO_SEARCHES + 1):
+            # Calculate next search date (day after last slot date)
+            if not dates:
+                break
+            last_date = datetime.strptime(dates[-1], "%Y-%m-%d")
+            next_date = (last_date + timedelta(days=1)).strftime("%Y-%m-%d")
+
+            logger.info(f"👨‍⚕️ Doctor '{doctor_name}' not found (attempt {attempt}/{MAX_AUTO_SEARCHES}). Auto-searching from {next_date}...")
+
+            # Search new slots via API
+            patient_dob = flow_manager.state.get("patient_dob", "1980-04-13")
+            dob_formatted = patient_dob.replace("-", "")
+
+            import asyncio
+            loop = asyncio.get_event_loop()
+            try:
+                new_slots = await loop.run_in_executor(
+                    None,
+                    lambda nd=next_date: list_slot(
+                        health_center_uuid=selected_center.uuid,
+                        date_search=nd,
+                        uuid_exam=uuid_exam,
+                        gender=flow_manager.state.get("patient_gender", "m"),
+                        date_of_birth=dob_formatted
+                    )
+                )
+            except Exception as e:
+                logger.error(f"👨‍⚕️ Auto-search API error on attempt {attempt}: {e}")
+                break
+
+            if not new_slots:
+                logger.info(f"👨‍⚕️ No slots found from {next_date}, stopping auto-search")
+                break
+
+            # Try matching in new slots
+            match_type, best, new_doctors, scored = _try_match_doctor_in_slots(doctor_name, new_slots)
+            all_searched_doctors.update(d["full_name"] for d in new_doctors)
+
+            # Update dates for next iteration
+            dates = sorted(set(s["start_time"][:10] for s in new_slots))
+
+            if match_type == "match":
+                # Found the doctor in new date range — update state and return
+                flow_manager.state["available_slots"] = new_slots
+                logger.info(f"👨‍⚕️ Found doctor on auto-search attempt {attempt} from {next_date}")
+                return _build_doctor_match_result(doctor_name, best, new_slots, flow_manager, current_service)
+
+            if match_type == "partial":
+                # Found partial match in new slots — let patient confirm
+                flow_manager.state["available_slots"] = new_slots
+                logger.info(f"👨‍⚕️ Partial match on auto-search attempt {attempt}: '{best['full_name']}'")
+                return {
+                    "success": False,
+                    "match_type": "partial",
+                    "suggested_doctor": best["full_name"],
+                    "message": f"Doctor '{doctor_name}' not found. Closest match: {best['full_name']}. Ask patient to confirm."
+                }, None
+
+        # --- Exhausted all searches: doctor not available ---
+        last_date_searched = dates[-1] if dates else ""
+        logger.info(f"👨‍⚕️ Doctor '{doctor_name}' not found after {MAX_AUTO_SEARCHES} auto-searches. Searched {original_date_display} to {last_date_searched}")
+        return {
+            "success": False,
+            "match_type": "not_available",
+            "requested_doctor": doctor_name,
+            "available_doctors": original_doctor_names,
+            "current_date": original_date_display,
+            "searched_up_to": last_date_searched,
+            "message": f"Doctor '{doctor_name}' is NOT available for this service at this center. We already searched ALL dates from {original_date_display} to {last_date_searched} and this doctor has no slots. Do NOT offer to search other dates — the doctor is definitively unavailable. On {original_date_display}, the available doctors are: {', '.join(original_doctor_names)}"
+        }, None
+
+    except Exception as e:
+        logger.error(f"❌ Error filtering by doctor: {e}")
+        return {"success": False, "message": "Error filtering by doctor."}, None
+
+
+def _build_doctor_match_result(doctor_name: str, best: dict, slots: list, flow_manager: FlowManager, current_service) -> Tuple[Dict[str, Any], NodeConfig]:
+    """Build result for a successful doctor match (score >= 80)."""
+    matched_name = best["full_name"]
+    filtered = [s for s in slots if _slot_doctor_full_name(s) == matched_name]
+
+    flow_manager.state["available_slots"] = filtered
+    logger.info(f"👨‍⚕️ Doctor filter: matched '{doctor_name}' → '{matched_name}' (score {best['score']}), {len(filtered)} slots")
+
+    from flows.nodes.booking import create_slot_selection_node
+
+    return {
+        "success": True,
+        "matched_doctor": matched_name,
+        "filtered_slots_count": len(filtered),
+        "message": f"Filtered to {len(filtered)} slots with {matched_name}"
+    }, create_slot_selection_node(
+        slots=filtered,
+        service=current_service,
+        is_cerba_member=flow_manager.state.get("is_cerba_member", False),
+        user_preferred_date=flow_manager.state.get("preferred_date"),
+        time_preference=flow_manager.state.get("time_preference", "any time"),
+        slot_cache=flow_manager.state.setdefault("slot_cache", {})
+    )

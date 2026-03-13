@@ -17,23 +17,28 @@ from config.settings import settings
 def create_service_selection_node(services: List[HealthService] = None, search_term: str = "") -> NodeConfig:
     """Dynamically create enhanced service selection node with top 3 services"""
     if services:
-        # Format services for presentation (top 3)
+        # Format services for presentation (top 3) with UUIDs for auto-selection
         top_services = services[:3]
-        service_options = "\n".join([service.name for service in top_services])
-        
-        task_content = f"""I found these services for '{search_term}':
+        service_lines = []
+        for service in top_services:
+            service_lines.append(f"- {service.name} (uuid: {service.uuid})")
+        service_options = "\n".join(service_lines)
 
+        task_content = f"""Patient asked for: "{search_term}"
+
+Search results (ranked by relevance, best match first):
 {service_options}
 
-Choose one of these services, or tell me 'say the full service name' if none of these match what you're looking for."""
+🎯 AUTO-SELECT RULE: If the #1 result clearly matches what the patient asked for (same service, just minor wording/formatting differences like parentheses, capitalization, word order), call select_service IMMEDIATELY with its UUID — do NOT ask the patient to choose.
+Only present options to the patient if you're genuinely unsure which service they want (e.g., "prima visita" vs "controllo" are different services)."""
     else:
         task_content = "Choose one of the found services, or tell me 'say the full service name' for a more specific search."
-    
+
     return NodeConfig(
         name="service_selection",
         role_messages=[{
             "role": "system",
-            "content": f"Help the patient choose from the top 3 search results, and also tell them that if none of these services match, they should say the full service name to refine the search. **CRITICAL: NEVER use 1., 2., 3., or numbers when listing services. List only the service names separated by commas or line breaks, without numerical prefixes.** Speak naturally like a human. 🔇 SILENT FUNCTION CALLS: When calling select_service or refine_search, call it IMMEDIATELY with NO preceding text. Do NOT say 'Cerco', 'Un momento', 'Let me search' or similar — the system handles status messages automatically. {settings.language_config}"
+            "content": f"Help the patient select a health service. **CRITICAL: NEVER use 1., 2., 3., or numbers when listing services. List only the service names separated by commas or line breaks, without numerical prefixes.** Speak naturally like a human. 🔇 SILENT FUNCTION CALLS: When calling select_service or refine_search, call it IMMEDIATELY with NO preceding text. Do NOT say 'Cerco', 'Un momento', 'Let me search' or similar — the system handles status messages automatically. {settings.language_config}"
         }],
         task_messages=[{
             "role": "system",
