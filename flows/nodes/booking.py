@@ -22,7 +22,6 @@ from flows.handlers.booking_handlers import (
     collect_datetime_and_transition,
     search_slots_and_transition,
     select_slot_and_book,
-    create_booking_and_transition,
     confirm_booking_summary_and_proceed,
     update_date_and_search_slots,
     show_more_same_day_slots_handler,
@@ -1148,35 +1147,6 @@ RULES:
     )
 
 
-def create_booking_creation_node() -> NodeConfig:
-    """Create booking confirmation and creation node"""
-    return NodeConfig(
-        name="booking_creation",
-        role_messages=[{
-            "role": "system",
-            "content": f"Confirm booking details and create the appointment. {settings.language_config}"
-        }],
-        task_messages=[{
-            "role": "system",
-            "content": "Perfect! I'm ready to book your appointment. Please confirm if you want to proceed with this booking."
-        }],
-        functions=[
-            FlowsFunctionSchema(
-                name="create_booking",
-                handler=create_booking_and_transition,
-                description="Create the appointment booking",
-                properties={
-                    "confirm_booking": {
-                        "type": "boolean",
-                        "description": "Confirmation to proceed with booking (true/false)"
-                    }
-                },
-                required=["confirm_booking"]
-            )
-        ]
-    )
-
-
 def create_slot_refresh_node(service_name: str) -> NodeConfig:
     """Create slot refresh node when booking fails due to unavailability"""
     return NodeConfig(
@@ -1203,7 +1173,7 @@ def create_slot_refresh_node(service_name: str) -> NodeConfig:
 
 
 def create_no_slots_node(date: str, time_preference: str = "any time", first_appointment_date: str = None, is_automatic_search: bool = False, has_booked_slots: bool = False, booked_slots_info: str = "", service_name: str = "") -> NodeConfig:
-    """Create node when no slots are available - with human-like alternative suggestions
+    """Create node when no slots are available — offer operator transfer first, then alternative dates.
 
     Args:
         date: The date that was searched
@@ -1214,13 +1184,11 @@ def create_no_slots_node(date: str, time_preference: str = "any time", first_app
         booked_slots_info: Human-readable summary of already-booked services
         service_name: Name of the service being searched (to avoid LLM confusion in multi-service flows)
     """
+    from flows.handlers.booking_handlers import no_slots_transfer_handler
 
     # Build constraint message for multi-service bookings
-    date_constraint_msg = ""
     system_constraint_msg = ""
-
     if first_appointment_date:
-        date_constraint_msg = f" IMPORTANT: Since this is your second appointment, it must be scheduled on or after your first appointment date ({first_appointment_date}). Please do not suggest any dates before {first_appointment_date}."
         system_constraint_msg = f"CRITICAL CONSTRAINT: This is a multi-service booking. The first appointment is on {first_appointment_date}. You MUST NOT suggest any dates before {first_appointment_date}. Only suggest dates on {first_appointment_date} or later dates. "
 
     # Build already-booked context for multi-service bookings
@@ -1228,33 +1196,32 @@ def create_no_slots_node(date: str, time_preference: str = "any time", first_app
     if booked_slots_info:
         booked_context = f"ALREADY RESERVED (mention this to the patient): {booked_slots_info}. "
 
-    # Service name context for LLM (prevents confusion in multi-service flows)
+    # Service name context for LLM
     service_context = f" You are currently searching slots for: {service_name}." if service_name else ""
-
-    # Different message tone for automatic search (2nd+ services) vs user-chosen date (1st service)
-    if is_automatic_search and first_appointment_date:
-        # For 2nd+ services: Don't apologize about the date since user didn't choose it
-        # Mention the first appointment context and present alternatives naturally
-        service_label = service_name or "il secondo servizio"
-        no_slots_message = f"Dal momento che il tuo primo appuntamento è il {first_appointment_date}, ho cercato disponibilità per {service_label}. Vorresti che controllassi altre date disponibili? Posso verificare gli orari disponibili nei giorni successivi."
-    else:
-        # For 1st service or user-chosen dates: Keep original apologetic tone
-        service_label = service_name or "the requested service"
-        if time_preference == "any time":
-            no_slots_message = f"I'm sorry, there are no available slots for {service_label} on {date}.{date_constraint_msg} I'd like to suggest some alternatives: would you like to try a different date? I can check if there are available slots on nearby dates."
-        else:
-            no_slots_message = f"I'm sorry, there are no available slots for {service_label} on {date} for {time_preference}.{date_constraint_msg} I'd like to suggest some alternatives: would you like to try a different date or time? For example, we might have available slots for {date} at a different time or on another date."
 
     # Build skip instruction for multi-service bookings
     skip_instruction = ""
     if has_booked_slots:
         skip_instruction = " If the user says they want to skip this service and proceed with only the already-booked services, call the skip_current_service function."
 
+    # Primary message: no availability, offer operator transfer
+    service_label = service_name or "la prestazione selezionata"
+    no_slots_message = f"Attualmente non risultano disponibilità per {service_label}. Se vuoi, posso metterti in contatto con un operatore, oppure possiamo provare a cercare una data diversa."
+
     functions = [
+        # Primary: transfer to operator
+        FlowsFunctionSchema(
+            name="transfer_to_operator",
+            handler=no_slots_transfer_handler,
+            description="Transfer the patient to a human operator. Use when the patient confirms they want to speak with an operator.",
+            properties={},
+            required=[]
+        ),
+        # Secondary: try a different date
         FlowsFunctionSchema(
             name="collect_datetime",
             handler=collect_datetime_and_transition,
-            description="Collect new preferred date and optional time preference",
+            description="Collect new preferred date and optional time preference. Use when the patient declines the operator transfer and wants to try a different date.",
             properties={
                 "preferred_date": {
                     "type": "string",
@@ -1289,7 +1256,13 @@ def create_no_slots_node(date: str, time_preference: str = "any time", first_app
         name="no_slots_available",
         role_messages=[{
             "role": "system",
-            "content": f"{system_constraint_msg}{booked_context}We are in {settings.current_year}.{service_context} When there are no available slots, be helpful and suggest alternatives in a human way. Offer to search for different dates or times.{skip_instruction} Never mention technical details or UUIDs. NEVER say the booking is confirmed or completed - the booking has NOT been finalized yet. {settings.language_config}"
+            "content": f"""{system_constraint_msg}{booked_context}We are in {settings.current_year}.{service_context}
+
+Tell the patient there is no availability for the selected service. Offer to transfer them to a human operator. If they decline the transfer, offer to try a different date.{skip_instruction}
+
+IMPORTANT: Say the message naturally in Italian. Do NOT mention technical details or UUIDs. Do NOT say the booking is confirmed.
+
+🔇 SILENT FUNCTION CALLS: When calling transfer_to_operator, call it IMMEDIATELY with NO preceding text. {settings.language_config}"""
         }],
         task_messages=[{
             "role": "system",
@@ -1428,8 +1401,8 @@ When user confirms/cancels/changes, call confirm_booking_summary function. DO NO
                 properties={
                     "action": {
                         "type": "string",
-                        "enum": ["proceed", "cancel", "change"],
-                        "description": "proceed: continue with current booking, cancel: stop completely, change: modify the time slot (keeps same service and date but shows other available times)"
+                        "enum": ["proceed", "change"],
+                        "description": "proceed: continue with current booking, change: modify the time slot (keeps same service and date but shows other available times)"
                     }
                 },
                 required=["action"]
@@ -1440,4 +1413,4 @@ When user confirms/cancels/changes, call confirm_booking_summary function. DO NO
 
 
 
-# slot_booking_processing removed — consolidated into inline handler (select_slot_and_book / create_booking_and_transition)
+# slot_booking_processing removed — consolidated into inline handler (select_slot_and_book)

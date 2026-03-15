@@ -33,7 +33,7 @@ class Settings:
         return {
             "api_key": self.api_keys["deepgram"],
             "sample_rate": 16000,
-            "model": "nova-3-general",  # Upgraded to Nova-3 for 53.4% better accuracy
+            "model": "nova-3-general",
             "language": os.getenv("DEEPGRAM_STT_LANGUAGE", "it"),
             "encoding": "linear16",
             "channels": 1,
@@ -43,9 +43,33 @@ class Settings:
             "vad_events": False,
             "profanity_filter": False,
             "numerals": True,
-            # Nova-3 uses keyterms instead of keywords for better recognition
+            "endpointing": 300,  # 300ms silence before finalizing (default 10ms too aggressive)
+            # Nova-3 keyterm prompting — boosts recognition of Italian medical/booking vocabulary
             "keyterm": [
-                "Maschio", "femmina", "cerba healthcare"
+                # Booking actions
+                "procediamo", "confermo", "conferma", "annulla", "annullare",
+                "va bene", "sì", "prenota", "proseguiamo", "cambiare", "modificare",
+                # Gender
+                "maschio", "femmina",
+                # Brand / Locations
+                "Cerba Healthcare", "Leini",
+                # Common medical services
+                "ecografia", "radiografia", "risonanza magnetica", "TAC",
+                "elettrocardiogramma", "ECG", "emocromo", "analisi del sangue",
+                "visita specialistica", "visita cardiologica", "visita ortopedica",
+                "visita dermatologica", "visita ginecologica", "visita oculistica",
+                "visita urologica", "visita neurologica", "visita otorinolaringoiatrica",
+                "fisioterapia", "mammografia", "densitometria ossea", "MOC",
+                "holter", "ecocardiogramma", "spirometria", "colonscopia",
+                "gastroscopia", "ecocolordoppler", "pap test", "tampone",
+                # Body parts
+                "addome", "torace", "ginocchio", "spalla", "caviglia", "anca",
+                "colonna vertebrale", "cervicale", "lombare",
+                # Patient data
+                "codice fiscale", "tessera sanitaria",
+                # Medical terms
+                "prescrizione", "impegnativa", "medicina sportiva",
+                "medicina del lavoro", "laboratorio", "prelievo",
             ]
         }
 
@@ -66,7 +90,13 @@ class Settings:
     
     def _load_phrase_list(self):
         """Load base phrases + doctor names from data/doctor_names.json"""
-        base_phrases = ["maschio", "femmina", "cerba healthcare", "RX Cavigilia Destra"]
+        base_phrases = [
+            "maschio", "femmina", "cerba healthcare", "RX Cavigilia Destra",
+            # Booking confirmation/action keywords — prevent STT misrecognition
+            "procediamo", "confermo", "conferma", "annulla", "annullare",
+            "cambiare", "modificare", "va bene", "sì", "no",
+            "prenota", "prenotare", "proseguiamo",
+        ]
         try:
             import json
             json_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "doctor_names.json")

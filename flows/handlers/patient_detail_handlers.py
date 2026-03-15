@@ -7,6 +7,7 @@ from loguru import logger
 
 from pipecat_flows import FlowManager, NodeConfig, FlowArgs
 from services.call_logger import call_logger
+from services.patient_lookup import normalize_phone
 
 
 def _get_doctor_display_name(flow_manager: FlowManager) -> str:
@@ -91,7 +92,7 @@ async def collect_phone_and_transition(args: FlowArgs, flow_manager: FlowManager
 
     # If user says "yes" and we have caller phone from Talkdesk, use it
     if phone in ["yes", "si", "sì", "correct", "okay", "ok", "va bene"] and caller_phone_from_talkdesk:
-        phone_clean = ''.join(filter(str.isdigit, caller_phone_from_talkdesk))
+        phone_clean = normalize_phone(caller_phone_from_talkdesk) or ''.join(filter(str.isdigit, caller_phone_from_talkdesk))
         logger.info(f"📞 Using caller's phone number from Talkdesk: {phone_clean}")
     else:
         # DEBUG: Why didn't we use the Talkdesk phone?
@@ -110,12 +111,13 @@ async def collect_phone_and_transition(args: FlowArgs, flow_manager: FlowManager
         if not phone or len(phone) < 8:
             return {"success": False, "message": "Please provide a valid phone number"}, None
 
-        # Clean phone number (remove spaces, dashes, etc.)
-        phone_clean = ''.join(filter(str.isdigit, phone))
+        # Clean phone number (remove spaces, dashes, etc.) and normalize to +39 format
+        phone_digits = ''.join(filter(str.isdigit, phone))
 
-        if len(phone_clean) < 8:
+        if len(phone_digits) < 8:
             return {"success": False, "message": "Please provide a valid phone number with at least 8 digits"}, None
 
+        phone_clean = normalize_phone(phone) or f"+39{phone_digits}"
         logger.info(f"📞 Patient provided different phone: {phone_clean}")
 
     # Store phone in state

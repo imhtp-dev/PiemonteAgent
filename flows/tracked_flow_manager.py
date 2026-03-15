@@ -222,6 +222,11 @@ class TrackedFlowManager(FlowManager):
                     FailureTracker.reset(self.state)
                     span.set_attribute("handler.outcome", "success")
 
+                # Clear cancel confirmation flag on any successful non-cancel handler
+                # This ensures the flag doesn't persist if patient decides not to cancel
+                if handler_name != "global_cancel_and_restart":
+                    self.state.pop("_cancel_confirmed", None)
+
             # Add next node info to span
             if next_node:
                 try:

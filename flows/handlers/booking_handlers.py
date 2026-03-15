@@ -1709,47 +1709,6 @@ async def select_slot_and_book(args: FlowArgs, flow_manager: FlowManager) -> Tup
     return await perform_slot_booking_and_transition(args, flow_manager)
 
 
-async def create_booking_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
-    """Create the slot reservation using create_slot function"""
-    confirm_booking = args.get("confirm_booking", False)
-    
-    if not confirm_booking:
-        from flows.nodes.completion import create_restart_node
-        return {"success": False, "message": "Booking cancelled"}, create_restart_node()
-    
-    try:
-        selected_slot = flow_manager.state.get("selected_slot")
-        selected_services = flow_manager.state.get("selected_services", [])
-        current_service_index = flow_manager.state.get("current_service_index", 0)
-        
-        if not selected_slot:
-            from flows.nodes.completion import create_error_node
-            return {"success": False, "message": "No slot selected"}, create_error_node("No slot selected.")
-        
-        # Store slot booking parameters for inline perform
-        flow_manager.state["pending_slot_booking_params"] = {
-            "selected_slot": selected_slot,
-            "selected_services": selected_services,
-            "current_service_index": current_service_index
-        }
-
-        # Speak TTS filler directly to TTS processor, then perform booking inline
-        current_service_name = selected_services[current_service_index].name if current_service_index < len(selected_services) else "your appointment"
-        tts_service = flow_manager.state.get("tts_service")
-        if tts_service:
-            await tts_service.queue_frame(TTSSpeakFrame(f"Prenotazione della fascia oraria per {current_service_name.replace(' + ', ' più ')}. Attendi..."))
-
-        return await perform_slot_booking_and_transition(args, flow_manager)
-
-    except Exception as e:
-        logger.error(f"❌ Slot booking initialization error: {e}")
-        from flows.nodes.completion import create_error_node
-        return {
-            "success": False,
-            "message": "Slot booking failed. Please try again."
-        }, create_error_node("Slot booking failed. Please try again.")
-
-
 async def _proceed_to_cerba_or_summary(flow_manager, slot_uuid) -> Tuple[Dict[str, Any], NodeConfig]:
     """Helper: after all bookings complete, check cerba pricing then show summary."""
     booked_slots = flow_manager.state.get("booked_slots", [])
@@ -2129,59 +2088,6 @@ async def perform_slot_booking_and_transition(args: FlowArgs, flow_manager: Flow
         return {"success": False, "message": "Failed to create booking"}, create_error_node("Booking creation failed. Please try again.")
 
 
-async def handle_booking_modification(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
-    """Handle booking cancellation/modification"""
-    action = args.get("action", "").lower()
-    
-    if action == "cancel":
-        booked_slots = flow_manager.state.get("booked_slots", [])
-        
-        if not booked_slots:
-            return {"success": False, "message": "No bookings to cancel"}, None
-        
-        try:
-            # Cancel all booked slots
-            cancelled_slots = []
-            for slot in booked_slots:
-                slot_uuid = slot["slot_uuid"]
-                delete_response = delete_slot(slot_uuid)
-                
-                if delete_response.status_code == 200:
-                    cancelled_slots.append(slot)
-                    logger.info(f"🗑️ Cancelled booking: {slot_uuid}")
-            
-            # Clear booked slots from state
-            flow_manager.state["booked_slots"] = []
-            
-            from flows.nodes.completion import create_restart_node
-            return {
-                "success": True,
-                "cancelled_count": len(cancelled_slots),
-                "message": f"Successfully cancelled {len(cancelled_slots)} booking(s)"
-            }, create_restart_node()
-            
-        except Exception as e:
-            logger.error(f"Cancellation error: {e}")
-            return {"success": False, "message": "Failed to cancel bookings"}, None
-    
-    elif action == "change_time":
-        # Cancel existing bookings first, then redirect to date/time collection
-        booked_slots = flow_manager.state.get("booked_slots", [])
-        if booked_slots:
-            for slot in booked_slots:
-                try:
-                    delete_slot(slot["slot_uuid"])
-                    logger.info(f"🗑️ Cancelled booking for rescheduling: {slot['slot_uuid']}")
-                except:
-                    pass
-            flow_manager.state["booked_slots"] = []
-        
-        return await auto_search_first_available(flow_manager)
-    
-    else:
-        return {"success": False, "message": "Please specify 'cancel' or 'change_time'"}, None
-
-
 async def confirm_booking_summary_and_proceed(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
     """Handle booking summary confirmation and proceed accordingly"""
     action = args.get("action", "")
@@ -2233,16 +2139,6 @@ async def confirm_booking_summary_and_proceed(args: FlowArgs, flow_manager: Flow
             "patient_found": False
         }, create_collect_full_name_node()
 
-    elif action == "cancel":
-        logger.info("❌ Patient cancelled booking due to cost/preferences")
-
-        # Go to restart/cancellation flow
-        from flows.nodes.completion import create_restart_node
-        return {
-            "success": False,
-            "message": "Booking cancelled as requested"
-        }, create_restart_node()
-
     elif action == "change":
         logger.info("🔄 Patient wants to change booking details")
 
@@ -2291,7 +2187,7 @@ async def confirm_booking_summary_and_proceed(args: FlowArgs, flow_manager: Flow
             return await auto_search_first_available(flow_manager)
 
     else:
-        return {"success": False, "message": "Please let me know if you want to proceed, cancel, or change the booking"}, None
+        return {"success": False, "message": "Please let me know if you want to proceed or change the time slot"}, None
 
 
 async def show_more_same_day_slots_handler(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
@@ -2519,6 +2415,17 @@ async def search_different_date_handler(args: FlowArgs, flow_manager: FlowManage
             "success": False,
             "message": "An error occurred while searching for slots"
         }, None
+
+
+async def no_slots_transfer_handler(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
+    """Transfer patient to operator when no slots are available."""
+    logger.info("📞 No slots available — patient requested operator transfer")
+    flow_manager.state["transfer_reason"] = "no_slots_available"
+    from flows.nodes.transfer import create_transfer_node_with_escalation
+    return {
+        "success": True,
+        "message": "Transferring to operator due to no slot availability"
+    }, await create_transfer_node_with_escalation(flow_manager)
 
 
 async def skip_current_service_handler(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:

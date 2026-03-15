@@ -193,7 +193,7 @@ def create_confirm_phone_node(phone: str) -> NodeConfig:
         }],
         task_messages=[{
             "role": "system",
-            "content": f"I have your phone number as: più{' '.join(phone)}. Is this correct? Say \"yes\" if it's correct, or \"change\" if you want to provide a different number."
+            "content": f"I have your phone number as: più {' '.join(phone.lstrip('+'))}. Is this correct? Say \"yes\" if it's correct, or \"change\" if you want to provide a different number."
         }],
         functions=[
             FlowsFunctionSchema(

@@ -9,7 +9,7 @@ from pipecat_flows import NodeConfig, FlowsFunctionSchema
 
 from models.requests import HealthService, HealthCenter
 from flows.handlers.service_handlers import search_health_services_and_transition
-from flows.handlers.booking_handlers import handle_booking_modification, retry_slot_selection_handler
+from flows.handlers.booking_handlers import retry_slot_selection_handler
 from flows.handlers.agent_routing_handlers import transfer_from_booking_to_info_handler
 from config.settings import settings
 
@@ -120,18 +120,6 @@ Your bookings are confirmed and you will receive confirmation details shortly.""
                     }
                 },
                 required=["user_question"]
-            ),
-            FlowsFunctionSchema(
-                name="manage_booking",
-                handler=handle_booking_modification,
-                description="Cancel or modify existing bookings",
-                properties={
-                    "action": {
-                        "type": "string",
-                        "description": "Action to take: 'cancel' to cancel the booking, 'change_time' to reschedule"
-                    }
-                },
-                required=["action"]
             ),
             FlowsFunctionSchema(
                 name="start_new_booking",

@@ -31,19 +31,23 @@ def normalize_phone(raw: str) -> Optional[str]:
     if not digits_only:
         return None
 
-    # Handle Italian numbers
-    if digits_only.startswith('39'):
-        # Already has country code
-        return f"+{digits_only}"
-    elif digits_only.startswith('3'):
-        # Missing country code, add Italian +39
+    # Handle Italian numbers by digit count (avoids ambiguity with numbers starting with 39XX)
+    # Italian mobile numbers are always 10 digits without country code (3XX XXX XXXX)
+    if len(digits_only) == 10:
+        # Local Italian mobile number, prepend +39
         return f"+39{digits_only}"
-    elif len(digits_only) >= 10:
-        # Assume it's a complete number, add +39 if reasonable length
+    elif len(digits_only) == 12 and digits_only.startswith('39'):
+        # Already has country code 39 + 10 digit number
+        return f"+{digits_only}"
+    elif len(digits_only) >= 13 and digits_only.startswith('0039'):
+        # International format with 00 prefix
+        return f"+{digits_only[2:]}"
+    elif len(digits_only) < 10 and len(digits_only) >= 8:
+        # Short number, assume Italian
         return f"+39{digits_only}"
 
     # If we can't determine format, return None
-    logger.warning(f"📞 Could not normalize phone: {raw}")
+    logger.warning(f"📞 Could not normalize phone: {raw} (digits: {digits_only}, len: {len(digits_only)})")
     return None
 
 

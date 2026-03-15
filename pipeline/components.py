@@ -175,7 +175,9 @@ def create_deepgram_stt_service() -> DeepgramSTTService:
                 punctuate=config["punctuate"],
                 vad_events=config["vad_events"],
                 profanity_filter=config["profanity_filter"],
-                numerals=config["numerals"]
+                numerals=config["numerals"],
+                endpointing=config.get("endpointing", 10),
+                keyterm=config.get("keyterm", []),
             )
         )
 

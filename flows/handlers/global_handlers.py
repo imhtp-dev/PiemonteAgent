@@ -675,9 +675,21 @@ async def global_cancel_and_restart(
     """
     Cancel current booking (delete any reserved slots) and return to router.
     Used when patient wants to abandon current booking and start fresh.
+    Requires double-confirmation to prevent accidental cancellation from STT errors.
     """
     try:
-        logger.info("🔄 [GLOBAL] Cancel and restart booking")
+        # Double-confirmation guard: first call arms, second call executes
+        if not flow_manager.state.get("_cancel_confirmed"):
+            flow_manager.state["_cancel_confirmed"] = True
+            logger.info("🔄 [GLOBAL] Cancel requested — awaiting patient confirmation")
+            return {
+                "success": False,
+                "message": "IMPORTANT: Before cancelling, you MUST ask the patient to confirm: 'Sei sicuro di voler annullare la prenotazione?' (Are you sure you want to cancel the booking?). Call cancel_and_restart again ONLY if the patient explicitly confirms they want to cancel."
+            }, None  # Stay at current node
+
+        # Patient confirmed — clear flag and proceed with cancellation
+        flow_manager.state.pop("_cancel_confirmed", None)
+        logger.info("🔄 [GLOBAL] Cancel confirmed by patient, proceeding with cancellation")
 
         # Delete any reserved slots
         booked_slots = flow_manager.state.get("booked_slots", [])
