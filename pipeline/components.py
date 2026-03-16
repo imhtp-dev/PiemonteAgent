@@ -325,6 +325,7 @@ def create_context_aggregator(
                 node_mute_strategy,
             ],
             user_turn_strategies=user_turn_strategies,
+            user_turn_stop_timeout=3.0,  # VAD fires but no transcript → reprompt after 3s (default 5s)
         ),
     )
     return aggregator, node_mute_strategy

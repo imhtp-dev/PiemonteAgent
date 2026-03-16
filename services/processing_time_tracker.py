@@ -42,6 +42,7 @@ class ProcessingTimeTracker(FrameProcessor):
         self._lock = asyncio.Lock()
         self._waiting_for_real_response = False  # Track if we're waiting for bot's real response
         self._bot_is_responding = False  # Track if bot is currently generating/speaking a response
+        self._watchdog_task: Optional[asyncio.Task] = None  # Watchdog to force-reset after injection
 
         logger.debug(f"ProcessingTimeTracker initialized: {threshold_seconds}s threshold")
 
@@ -55,11 +56,9 @@ class ProcessingTimeTracker(FrameProcessor):
         # We're now AFTER LLM so we can't see TranscriptionFrame anymore
         # We start timer here and LLMFullResponseStartFrame will stop it if LLM responds quickly
         if isinstance(frame, UserStoppedSpeakingFrame):
-            # Only start timer if bot is NOT already responding
-            if not self._bot_is_responding:
-                await self._start_timer()
-            else:
-                pass  # Bot already responding
+            # Always start fresh timer on new user turn — _start_timer() resets all flags
+            # including _bot_is_responding, so stale state from a previous turn can't block us
+            await self._start_timer()
 
         # User started speaking again - cancel monitoring (user interrupted)
         elif isinstance(frame, UserStartedSpeakingFrame):
@@ -116,6 +115,11 @@ class ProcessingTimeTracker(FrameProcessor):
                 except asyncio.CancelledError:
                     pass
 
+            # Cancel watchdog from previous turn
+            if self._watchdog_task and not self._watchdog_task.done():
+                self._watchdog_task.cancel()
+                self._watchdog_task = None
+
             # Reset state
             self._processing_start_time = time.time()
             self._warning_spoken = False
@@ -124,8 +128,6 @@ class ProcessingTimeTracker(FrameProcessor):
 
             # Start background timer task
             self._timer_task = asyncio.create_task(self._check_processing_time())
-
-            pass  # Timer started
 
     async def _stop_timer(self):
         """Stop monitoring when TTS starts (response is ready)"""
@@ -141,6 +143,11 @@ class ProcessingTimeTracker(FrameProcessor):
                     await self._timer_task
                 except asyncio.CancelledError:
                     pass
+
+            # Cancel watchdog
+            if self._watchdog_task and not self._watchdog_task.done():
+                self._watchdog_task.cancel()
+                self._watchdog_task = None
 
             # Reset state
             self._processing_start_time = None
@@ -161,6 +168,11 @@ class ProcessingTimeTracker(FrameProcessor):
                     await self._timer_task
                 except asyncio.CancelledError:
                     pass
+
+            # Cancel watchdog
+            if self._watchdog_task and not self._watchdog_task.done():
+                self._watchdog_task.cancel()
+                self._watchdog_task = None
 
             # Reset state
             self._processing_start_time = None
@@ -234,6 +246,24 @@ class ProcessingTimeTracker(FrameProcessor):
 
             logger.success(f"✅ Processing message injected: '{message}', waiting for bot's real response")
 
+            # Start 15s watchdog — if no real LLM response resets us, force-reset state
+            # Prevents permanent death where _bot_is_responding=True never clears
+            self._watchdog_task = asyncio.create_task(self._watchdog_reset())
+
+    async def _watchdog_reset(self):
+        """Force-reset all state after 15s if no real LLM response clears _bot_is_responding."""
+        try:
+            await asyncio.sleep(15)
+            if self._bot_is_responding:
+                logger.warning("⚠️ ProcessingTimeTracker watchdog: 15s elapsed with no reset — force-clearing state")
+                self._processing_start_time = None
+                self._warning_spoken = False
+                self._waiting_for_real_response = False
+                self._bot_is_responding = False
+                self._timer_task = None
+        except asyncio.CancelledError:
+            pass
+
     async def cleanup(self):
         """Cleanup when processor is destroyed"""
         # Cancel any running timer
@@ -241,6 +271,14 @@ class ProcessingTimeTracker(FrameProcessor):
             self._timer_task.cancel()
             try:
                 await self._timer_task
+            except asyncio.CancelledError:
+                pass
+
+        # Cancel watchdog
+        if self._watchdog_task and not self._watchdog_task.done():
+            self._watchdog_task.cancel()
+            try:
+                await self._watchdog_task
             except asyncio.CancelledError:
                 pass
 

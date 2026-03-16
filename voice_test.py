@@ -375,11 +375,19 @@ class DailyHealthcareFlowTester:
             llm, smart_turn_enabled=settings.smart_turn_enabled
         )
 
+        # REGISTER VAD-NO-TRANSCRIPT TIMEOUT HANDLER
+        # When VAD fires but no transcript arrives within 3s, reprompt the user
+        @context_aggregator.user().event_handler("on_user_turn_stop_timeout")
+        async def on_user_turn_stop_timeout(aggregator):
+            logger.warning("⚠️ VAD fired but no transcript arrived — reprompting")
+            msg = "Non ho sentito, può ripetere?" if "Italian" in settings.language_config else "I didn't hear that, could you repeat?"
+            await aggregator.push_frame(TTSSpeakFrame(msg))
+
         logger.info("✅ All services initialized")
 
         # CREATE USER IDLE PROCESSOR FOR HANDLING TRANSCRIPTION FAILURES
         from services.idle_handler import create_user_idle_processor
-        user_idle_processor = create_user_idle_processor(timeout_seconds=20.0)
+        user_idle_processor = create_user_idle_processor(timeout_seconds=15.0)
 
         # CREATE PROCESSING TIME TRACKER FOR SLOW RESPONSE DETECTION
         from services.processing_time_tracker import create_processing_time_tracker
@@ -455,7 +463,7 @@ class DailyHealthcareFlowTester:
         logger.info("Healthcare Flow Pipeline structure:")
         logger.info("  1. Daily Input (WebRTC)")
         logger.info("  2. Deepgram STT")
-        logger.info("  3. UserIdleProcessor - Handle transcription failures & 20s silence")
+        logger.info("  3. UserIdleProcessor - Handle transcription failures & 15s silence")
         logger.info("  4. TranscriptProcessor.user() - Capture user transcriptions")
         logger.info("  5. Context Aggregator (User)")
         logger.info("  6. OpenAI LLM (with flows)")

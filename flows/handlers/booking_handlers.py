@@ -136,11 +136,24 @@ async def search_final_centers_and_transition(args: FlowArgs, flow_manager: Flow
         try:
             health_centers = await loop.run_in_executor(None, _search_centers)
         except Exception as e:
-            logger.error(f"❌ API error during center search: {e}")
+            error_str = str(e)
+            logger.error(f"❌ API error during center search: {error_str}")
+
+            # Invalid address: re-ask or transfer
+            if "Indirizzo non valido" in error_str:
+                address_retry_count = flow_manager.state.get("address_retry_count", 0)
+                if address_retry_count == 0:
+                    flow_manager.state["address_retry_count"] = 1
+                    logger.warning(f"⚠️ Address '{address}' not recognized in final search, asking patient to retry")
+                    from flows.nodes.patient_info import create_recollect_address_node
+                    return {"success": False, "message": "Address not recognized"}, create_recollect_address_node()
+                else:
+                    logger.error(f"❌ Address still invalid after retry in final search, offering transfer")
+
             from flows.nodes.transfer import create_transfer_node_with_escalation
             return {
                 "success": False,
-                "error": str(e),
+                "error": error_str,
                 "message": "Mi dispiace, c'è un problema tecnico. Ti trasferisco a un operatore."
             }, await create_transfer_node_with_escalation(flow_manager)
 
