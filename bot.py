@@ -36,6 +36,7 @@ from pipecat.frames.frames import (
     TranscriptionFrame,
     InterimTranscriptionFrame,
     Frame,
+    TTSSpeakFrame,
     LLMMessagesFrame,
     InputAudioRawFrame,
     OutputAudioRawFrame,
@@ -67,7 +68,6 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer, VADParams
-from pipecat.audio.filters.rnnoise_filter import RNNoiseFilter
 
 # Serializer imports
 from pipecat.serializers.base_serializer import FrameSerializer
@@ -429,7 +429,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         min_volume=settings.vad_config["min_volume"]
                     )
                 ),
-                audio_in_filter=RNNoiseFilter(),
                 serializer=RawPCMSerializer(),  # EXACT SAME AS APP.PY
                 session_timeout=900,
                 )
@@ -453,8 +452,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
         # CREATE USER IDLE PROCESSOR FOR HANDLING TRANSCRIPTION FAILURES
         from services.idle_handler import create_user_idle_processor
-        user_idle_processor = create_user_idle_processor(timeout_seconds=15.0)
-        logger.info("🕐 UserIdleProcessor created (15s timeout - last-resort reprompt)")
+        user_idle_processor = create_user_idle_processor(timeout_seconds=20.0)
+        logger.info("🕐 UserIdleProcessor created (20s timeout - accounts for API processing delays)")
 
         # CREATE PROCESSING TIME TRACKER FOR SLOW RESPONSE DETECTION
         from services.processing_time_tracker import create_processing_time_tracker
@@ -521,7 +520,7 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info("Healthcare Flow Pipeline structure:")
         logger.info("  1. Input (PCM from bridge)")
         logger.info("  2. Deepgram STT")
-        logger.info("  3. UserIdleProcessor - Handle transcription failures & 15s silence")
+        logger.info("  3. UserIdleProcessor - Handle transcription failures & 20s silence")
         logger.info("  4. TranscriptProcessor.user() - Capture user transcriptions")
         logger.info("  5. Context Aggregator (User)")
         logger.info("  6. OpenAI LLM (with flows)")

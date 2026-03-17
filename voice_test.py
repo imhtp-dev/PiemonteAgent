@@ -82,6 +82,7 @@ from pipecat.frames.frames import (
     TranscriptionFrame,
     InterimTranscriptionFrame,
     Frame,
+    TTSSpeakFrame,
     LLMMessagesFrame,
     InputAudioRawFrame,
     OutputAudioRawFrame
@@ -378,7 +379,7 @@ class DailyHealthcareFlowTester:
 
         # CREATE USER IDLE PROCESSOR FOR HANDLING TRANSCRIPTION FAILURES
         from services.idle_handler import create_user_idle_processor
-        user_idle_processor = create_user_idle_processor(timeout_seconds=15.0)
+        user_idle_processor = create_user_idle_processor(timeout_seconds=20.0)
 
         # CREATE PROCESSING TIME TRACKER FOR SLOW RESPONSE DETECTION
         from services.processing_time_tracker import create_processing_time_tracker
@@ -454,7 +455,7 @@ class DailyHealthcareFlowTester:
         logger.info("Healthcare Flow Pipeline structure:")
         logger.info("  1. Daily Input (WebRTC)")
         logger.info("  2. Deepgram STT")
-        logger.info("  3. UserIdleProcessor - Handle transcription failures & 15s silence")
+        logger.info("  3. UserIdleProcessor - Handle transcription failures & 20s silence")
         logger.info("  4. TranscriptProcessor.user() - Capture user transcriptions")
         logger.info("  5. Context Aggregator (User)")
         logger.info("  6. OpenAI LLM (with flows)")
