@@ -36,7 +36,6 @@ from pipecat.frames.frames import (
     TranscriptionFrame,
     InterimTranscriptionFrame,
     Frame,
-    TTSSpeakFrame,
     LLMMessagesFrame,
     InputAudioRawFrame,
     OutputAudioRawFrame,
@@ -68,6 +67,7 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer, VADParams
+from pipecat.audio.filters.rnnoise_filter import RNNoiseFilter
 
 # Serializer imports
 from pipecat.serializers.base_serializer import FrameSerializer
@@ -429,6 +429,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         min_volume=settings.vad_config["min_volume"]
                     )
                 ),
+                audio_in_filter=RNNoiseFilter(),
                 serializer=RawPCMSerializer(),  # EXACT SAME AS APP.PY
                 session_timeout=900,
                 )
@@ -444,14 +445,6 @@ async def websocket_endpoint(websocket: WebSocket):
         context_aggregator, node_mute_strategy = create_context_aggregator(
             llm, smart_turn_enabled=settings.smart_turn_enabled
         )
-
-        # REGISTER VAD-NO-TRANSCRIPT TIMEOUT HANDLER
-        # When VAD fires but no transcript arrives within 3s, reprompt the user
-        @context_aggregator.user().event_handler("on_user_turn_stop_timeout")
-        async def on_user_turn_stop_timeout(aggregator):
-            logger.warning("⚠️ VAD fired but no transcript arrived — reprompting")
-            msg = "Non ho sentito, può ripetere?" if "Italian" in settings.language_config else "I didn't hear that, could you repeat?"
-            await aggregator.push_frame(TTSSpeakFrame(msg))
 
         # CREATE TRANSCRIPT PROCESSOR FOR RECORDING CONVERSATIONS
         transcript_processor = TranscriptProcessor()

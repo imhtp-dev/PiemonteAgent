@@ -82,7 +82,6 @@ from pipecat.frames.frames import (
     TranscriptionFrame,
     InterimTranscriptionFrame,
     Frame,
-    TTSSpeakFrame,
     LLMMessagesFrame,
     InputAudioRawFrame,
     OutputAudioRawFrame
@@ -374,14 +373,6 @@ class DailyHealthcareFlowTester:
         context_aggregator, node_mute_strategy = create_context_aggregator(
             llm, smart_turn_enabled=settings.smart_turn_enabled
         )
-
-        # REGISTER VAD-NO-TRANSCRIPT TIMEOUT HANDLER
-        # When VAD fires but no transcript arrives within 3s, reprompt the user
-        @context_aggregator.user().event_handler("on_user_turn_stop_timeout")
-        async def on_user_turn_stop_timeout(aggregator):
-            logger.warning("⚠️ VAD fired but no transcript arrived — reprompting")
-            msg = "Non ho sentito, può ripetere?" if "Italian" in settings.language_config else "I didn't hear that, could you repeat?"
-            await aggregator.push_frame(TTSSpeakFrame(msg))
 
         logger.info("✅ All services initialized")
 
