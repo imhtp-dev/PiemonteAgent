@@ -114,9 +114,28 @@ async def perform_silent_center_search_and_generate_flow(args: FlowArgs, flow_ma
             except Exception as e:
                 logger.warning(f"⚠️ Center search failed at radius={radius_display}km: {e}")
 
+        # Check if all failures were due to invalid address
+        if not health_centers:
+            address_retry_count = flow_manager.state.get("address_retry_count", 0)
+
+            if address_retry_count == 0:
+                flow_manager.state["address_retry_count"] = 1
+                logger.warning(f"⚠️ Address '{address}' not recognized, asking patient to retry")
+                from flows.nodes.patient_info import create_recollect_address_node
+                return {"success": False, "message": "Address not recognized"}, create_recollect_address_node()
+            else:
+                logger.error(f"❌ Address still invalid after retry, offering transfer")
+                from flows.nodes.transfer import create_transfer_node_with_escalation
+                return {
+                    "success": False,
+                    "message": "Mi dispiace, non riesco a trovare il tuo indirizzo. Ti trasferisco a un operatore che potrà aiutarti."
+                }, await create_transfer_node_with_escalation(flow_manager)
+
         # Extract HC UUIDs (or fallback)
         if health_centers:
             hc_uuids = [hc.uuid for hc in health_centers]
+            # Reset address retry counter on success
+            flow_manager.state.pop("address_retry_count", None)
         else:
             logger.warning(f"⚠️ No centers found at max radius, falling back to Tradate UUID")
             hc_uuids = [FALLBACK_HC_UUID]

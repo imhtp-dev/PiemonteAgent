@@ -5,6 +5,7 @@ Patient information collection nodes
 from pipecat_flows import NodeConfig, FlowsFunctionSchema
 from flows.handlers.patient_handlers import (
     collect_address_and_transition,
+    recollect_address_and_transition,
     collect_gender_and_transition,
     collect_dob_and_transition,
     verify_basic_info_and_transition
@@ -156,6 +157,35 @@ When user responds, call verify_basic_info: confirms → action="confirm", chang
             )
         ]
     )
+
+def create_recollect_address_node() -> NodeConfig:
+    """Re-collect address after API returned 'Indirizzo non valido'. Skips gender/dob/verify on retry."""
+    return NodeConfig(
+        name="recollect_address",
+        role_messages=[{
+            "role": "system",
+            "content": f"The address the patient gave was not recognized by our system. Ask them to repeat their city or address more clearly. Be apologetic and natural. {settings.language_config}"
+        }],
+        task_messages=[{
+            "role": "system",
+            "content": "Mi dispiace, non sono riuscita a trovare l'indirizzo che mi hai indicato. Potresti ripetere la tua città o il tuo indirizzo?"
+        }],
+        functions=[
+            FlowsFunctionSchema(
+                name="recollect_address",
+                handler=recollect_address_and_transition,
+                description="Re-collect the patient's address after invalid address error",
+                properties={
+                    "address": {
+                        "type": "string",
+                        "description": "Patient's address or city"
+                    }
+                },
+                required=["address"]
+            )
+        ]
+    )
+
 
 def create_silent_center_search_and_flow_node() -> NodeConfig:
     """Silent node: center search + flow generation. No TTS, no pre_actions."""
