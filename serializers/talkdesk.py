@@ -30,7 +30,7 @@ from pipecat.frames.frames import (
     StartFrame,
     UninterruptibleFrame,
 )
-from pipecat.serializers.base_serializer import FrameSerializer, FrameSerializerType
+from pipecat.serializers.base_serializer import FrameSerializer
 
 
 class TalkdeskControlAction(Enum):
@@ -81,8 +81,8 @@ class TalkdeskFrameSerializer(FrameSerializer):
         self._stop_sent = False
 
     @property
-    def type(self) -> FrameSerializerType:
-        return FrameSerializerType.TEXT
+    def type(self):
+        return "text"
 
     async def setup(self, frame: StartFrame):
         self._sample_rate = self._params.sample_rate or frame.audio_in_sample_rate
