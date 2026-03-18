@@ -147,6 +147,91 @@ class CallDataExtractor:
         self.caller_phone = caller_phone
         self.interaction_id = interaction_id
         logger.info(f"⏱️ Call started at: {self.started_at}")
+
+    async def insert_initial_row(self):
+        """INSERT initial tb_stat row at call start (replaces bridge's save_call_to_supabase).
+        All fields set to N/A/null defaults. Will be UPDATEd by save_to_database() at call end.
+        Uses ON CONFLICT to safely handle double-inserts during migration.
+        """
+        try:
+            query = """
+            INSERT INTO tb_stat (
+                call_id, interaction_id, phone_number, assistant_id, started_at,
+                service, action, sentiment, esito_chiamata, summary, motivazione,
+                patient_intent, transcript, region, ended_at, duration_seconds,
+                cost, llm_token, call_type, patient_first_name, patient_surname,
+                patient_dob, patient_gender, patient_address, selected_services,
+                search_terms_used, selected_center_uuid, selected_center_name,
+                selected_center_address, selected_center_city, booked_slots,
+                preferred_date, preferred_time, appointment_datetime, booking_code,
+                total_booking_cost, is_cerba_member, reminder_authorization,
+                marketing_authorization, transfer_reason, transfer_timestamp,
+                recording_url_stereo, recording_url_user, recording_url_bot,
+                recording_duration_seconds
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+                $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
+                $31, $32, $33, $34, $35, $36, $37, $38, $39, $40,
+                $41, $42, $43, $44, $45
+            )
+            ON CONFLICT (call_id) DO NOTHING
+            """
+
+            await db.execute(
+                query,
+                self.call_id,                    # $1
+                self.interaction_id or "N/A",    # $2
+                self.caller_phone or "N/A",      # $3
+                self.assistant_id,               # $4
+                self.started_at or datetime.now(), # $5
+                "N/A",                           # $6 service
+                "N/A",                           # $7 action
+                "N/A",                           # $8 sentiment
+                "N/A",                           # $9 esito_chiamata
+                "N/A",                           # $10 summary
+                "N/A",                           # $11 motivazione
+                "N/A",                           # $12 patient_intent
+                "N/A",                           # $13 transcript
+                self.region,                     # $14 region
+                None,                            # $15 ended_at
+                None,                            # $16 duration_seconds
+                None,                            # $17 cost
+                0,                               # $18 llm_token
+                "N/A",                           # $19 call_type
+                "N/A",                           # $20 patient_first_name
+                "N/A",                           # $21 patient_surname
+                "N/A",                           # $22 patient_dob
+                "N/A",                           # $23 patient_gender
+                "N/A",                           # $24 patient_address
+                None,                            # $25 selected_services (JSONB)
+                None,                            # $26 search_terms_used (JSONB)
+                None,                            # $27 selected_center_uuid (UUID)
+                "N/A",                           # $28 selected_center_name
+                "N/A",                           # $29 selected_center_address
+                "N/A",                           # $30 selected_center_city
+                None,                            # $31 booked_slots (JSONB)
+                "N/A",                           # $32 preferred_date
+                "N/A",                           # $33 preferred_time
+                None,                            # $34 appointment_datetime
+                "N/A",                           # $35 booking_code
+                None,                            # $36 total_booking_cost
+                False,                           # $37 is_cerba_member
+                False,                           # $38 reminder_authorization
+                False,                           # $39 marketing_authorization
+                "N/A",                           # $40 transfer_reason
+                None,                            # $41 transfer_timestamp
+                "N/A",                           # $42 recording_url_stereo
+                "N/A",                           # $43 recording_url_user
+                "N/A",                           # $44 recording_url_bot
+                None,                            # $45 recording_duration_seconds
+            )
+
+            logger.info(f"✅ Initial tb_stat row created for call {self.call_id}")
+
+        except Exception as e:
+            logger.error(f"❌ Failed to insert initial tb_stat row: {e}")
+            # Non-fatal — save_to_database() at call end will still try UPDATE
     
     def end_call(self):
         """Mark call end time"""

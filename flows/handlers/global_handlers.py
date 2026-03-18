@@ -883,21 +883,31 @@ async def _handle_transfer_escalation(flow_manager: FlowManager) -> None:
 
         logger.info(f"   Queue Code: {queue_code}")
 
-        # Get stream_sid for Talkdesk
-        stream_sid = flow_manager.state.get("stream_sid", "")
-
-        # Call escalation API
-        from services.escalation_service import call_escalation_api
-
-        success = await call_escalation_api(
-            summary=analysis["summary"][:250],
-            sentiment=analysis["sentiment"],
-            action="transfer",
-            duration=str(analysis["duration_seconds"]),
-            queue_code=queue_code,
-            call_id=session_id,
-            stream_sid=stream_sid,
-        )
+        # Route escalation based on transport type
+        if flow_manager.state.get("is_talkdesk_direct"):
+            # Direct mode: push TalkdeskControlFrame through pipeline (no bridge)
+            from services.escalation_service import send_escalation_direct
+            success = await send_escalation_direct(
+                flow_manager=flow_manager,
+                summary=analysis["summary"][:250],
+                sentiment=analysis["sentiment"],
+                action="transfer",
+                duration=str(analysis["duration_seconds"]),
+                queue_code=queue_code,
+            )
+        else:
+            # Bridge mode: HTTP POST to bridge /escalation endpoint (legacy)
+            stream_sid = flow_manager.state.get("stream_sid", "")
+            from services.escalation_service import call_escalation_api
+            success = await call_escalation_api(
+                summary=analysis["summary"][:250],
+                sentiment=analysis["sentiment"],
+                action="transfer",
+                duration=str(analysis["duration_seconds"]),
+                queue_code=queue_code,
+                call_id=session_id,
+                stream_sid=stream_sid,
+            )
 
         # Store for later
         flow_manager.state["transfer_analysis"] = analysis

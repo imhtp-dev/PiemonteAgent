@@ -1,8 +1,12 @@
 """
 Escalation Service for transferring calls to human operators
-Calls the bridge escalation API which handles WebSocket closure and Talkdesk transfer
+
+Two modes:
+- Bridge mode: HTTP POST to bridge /escalation endpoint (legacy)
+- Direct mode: Push TalkdeskControlFrame through pipeline (no bridge)
 """
 import os
+import asyncio
 import aiohttp
 from loguru import logger
 from typing import Optional
@@ -124,4 +128,72 @@ async def call_escalation_api(
         return False
     except Exception as e:
         logger.error(f"❌ Escalation API unexpected error: {e}")
+        return False
+
+
+async def send_escalation_direct(
+    flow_manager,
+    summary: str,
+    sentiment: str,
+    action: str,
+    duration: str,
+    queue_code: str,
+) -> bool:
+    """
+    Direct escalation via TalkdeskControlFrame — no bridge HTTP call.
+    Pushes stop event with ringGroup through the pipeline serializer.
+
+    The TalkdeskControlFrame is an UninterruptibleFrame, so it queues
+    after any pending TTS frames. Sleep(2) before pushing ensures the
+    farewell TTS has time to flush.
+
+    Args:
+        flow_manager: FlowManager with state containing transport
+        summary: Call summary (max 240 chars for ringGroup)
+        sentiment: positive|neutral|negative
+        action: transfer
+        duration: Duration in seconds (as string)
+        queue_code: Talkdesk queue code (e.g. "1|3|2")
+
+    Returns:
+        True if frame was pushed successfully
+    """
+    try:
+        from serializers.talkdesk import TalkdeskControlFrame, TalkdeskControlAction
+
+        transport = flow_manager.state.get("transport")
+        if not transport:
+            logger.error("❌ No transport in flow_manager.state — cannot send escalation")
+            return False
+
+        # Build ringGroup in same format as bridge: summary::sentiment::action::duration::queue_code
+        ring_group = f"{summary[:240]}::{sentiment}::{action}::{duration}::{queue_code}"
+
+        add_span_attributes({
+            "escalation.mode": "direct",
+            "escalation.queue_code": queue_code,
+            "escalation.sentiment": sentiment,
+            "escalation.ring_group_length": len(ring_group),
+        })
+
+        logger.info(f"🚀 Direct escalation: queue_code={queue_code}, sentiment={sentiment}")
+        logger.info(f"   ringGroup: {ring_group[:100]}...")
+
+        # Wait for TTS farewell to flush before sending stop
+        await asyncio.sleep(2)
+
+        frame = TalkdeskControlFrame(
+            action=TalkdeskControlAction.ESCALATE,
+            ring_group=ring_group
+        )
+
+        # Push through output transport — serializer converts to Talkdesk stop event
+        from pipecat.processors.frame_processor import FrameDirection
+        await transport.output().queue_frame(frame, FrameDirection.DOWNSTREAM)
+
+        logger.info(f"✅ Direct escalation frame sent to Talkdesk")
+        return True
+
+    except Exception as e:
+        logger.error(f"❌ Direct escalation error: {e}")
         return False
