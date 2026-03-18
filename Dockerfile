@@ -56,6 +56,7 @@ COPY services/ ./services/
 COPY utils/ ./utils/
 COPY data/ ./data/
 COPY api/ ./api/
+COPY serializers/ ./serializers/
 COPY bot.py ./
 COPY chat_service.py ./
 
