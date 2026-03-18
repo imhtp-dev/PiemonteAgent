@@ -1105,7 +1105,7 @@ async def talkdesk_endpoint(websocket: WebSocket):
     business_status, ivr_path = extract_business_status_and_ivr(business_hours)
 
     import uuid
-    session_id = f"session-{uuid.uuid4().hex[:8]}"
+    session_id = str(uuid.uuid4())  # Full UUID — required for Supabase tb_stat.call_id
 
     logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     logger.info(f"New DIRECT Talkdesk Connection (no bridge)")
