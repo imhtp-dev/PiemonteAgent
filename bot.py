@@ -1090,9 +1090,12 @@ async def talkdesk_endpoint(websocket: WebSocket):
         return
 
     # ── 2. Extract metadata from start event ──
+    # Log raw start event for debugging Talkdesk format
+    logger.info(f"📦 Raw Talkdesk start event: {json.dumps(start_data)[:2000]}")
+
     stream_sid = start_data.get("streamSid") or start_data.get("start", {}).get("streamSid")
     if not stream_sid:
-        logger.error("❌ No streamSid in start event — rejecting connection")
+        logger.error(f"❌ No streamSid in start event — rejecting. Keys: {list(start_data.keys())}")
         await websocket.close()
         return
 
