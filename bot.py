@@ -1081,21 +1081,34 @@ async def talkdesk_endpoint(websocket: WebSocket):
     """
     await websocket.accept()
 
-    # ── 1. Read first message (Talkdesk start event) ──
+    # ── 1. Wait for Talkdesk start event ──
+    # Talkdesk may send a "connected" event before "start" — keep reading until we get "start"
+    start_data = None
     try:
-        first_msg = await websocket.receive_text()
-        start_data = json.loads(first_msg)
+        for _ in range(10):  # Max 10 messages before giving up
+            msg = await websocket.receive_text()
+            data = json.loads(msg)
+            logger.info(f"📦 Talkdesk message: event={data.get('event')} keys={list(data.keys())}")
+
+            if data.get("event") == "start":
+                start_data = data
+                logger.info(f"📦 Talkdesk START event received: {json.dumps(data)[:2000]}")
+                break
+            else:
+                logger.info(f"⏭️ Skipping non-start event: {data.get('event')}")
     except Exception as e:
         logger.error(f"❌ Failed to read Talkdesk start event: {e}")
         return
 
-    # ── 2. Extract metadata from start event ──
-    # Log raw start event for debugging Talkdesk format
-    logger.info(f"📦 Raw Talkdesk start event: {json.dumps(start_data)[:2000]}")
+    if not start_data:
+        logger.error("❌ Never received start event from Talkdesk — rejecting")
+        await websocket.close()
+        return
 
+    # ── 2. Extract metadata from start event ──
     stream_sid = start_data.get("streamSid") or start_data.get("start", {}).get("streamSid")
     if not stream_sid:
-        logger.error(f"❌ No streamSid in start event — rejecting. Keys: {list(start_data.keys())}")
+        logger.error(f"❌ No streamSid in start event — rejecting. Full event: {json.dumps(start_data)[:500]}")
         await websocket.close()
         return
 
