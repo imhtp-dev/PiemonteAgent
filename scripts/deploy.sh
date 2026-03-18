@@ -47,11 +47,11 @@ echo "# Pull latest image (force update)"
 echo "docker pull ${FULL_IMAGE_NAME}:latest"
 echo ""
 echo "# Stop and remove old container"
-echo "docker-compose down || docker stop healthcare-agent || true"
+echo "docker compose down || docker stop healthcare-agent || true"
 echo "docker rm healthcare-agent || true"
 echo ""
 echo "# Start with latest image"
-echo "docker-compose up -d"
+echo "docker compose up -d"
 echo ""
 echo "# Or run directly:"
 echo "docker run -d --name healthcare-agent -p 8000:8000 ${FULL_IMAGE_NAME}:latest"
@@ -72,8 +72,8 @@ Git Hash: ${GIT_HASH}
 
 Azure VM Commands:
 docker pull ${FULL_IMAGE_NAME}:latest
-docker-compose down
-docker-compose up -d
+docker compose down
+docker compose up -d
 
 Status Check:
 docker logs healthcare-agent

@@ -4,10 +4,12 @@ services:
     image: nginx:alpine
     container_name: nginx-load-balancer
     ports:
-      - "8000:8000"  # Bridge connects here
+      - "8000:8000"  # Bridge/internal connections
+      - "443:443"    # Direct Talkdesk connections (SSL)
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./logs/nginx:/var/log/nginx
+      - /etc/letsencrypt:/etc/letsencrypt:ro  # SSL certs
     depends_on:
       - pipecat-agent-1
       - pipecat-agent-2
