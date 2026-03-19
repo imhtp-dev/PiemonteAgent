@@ -68,16 +68,13 @@ class AzureSTTServiceWithPhrases(AzureSTTService):
 
         try:
             logger.info(f"🎯 Setting up phrase list with {len(self._phrase_list)} phrases")
-            logger.debug(f"🎯 Phrases: {', '.join(self._phrase_list)}")
 
             # Create phrase list grammar from recognizer
             self._phrase_list_grammar = speechsdk.PhraseListGrammar.from_recognizer(recognizer)
-            logger.debug("🎯 Created PhraseListGrammar from recognizer")
 
             # Add all phrases
             for phrase in self._phrase_list:
                 self._phrase_list_grammar.addPhrase(phrase)
-                logger.debug(f"🎯 Added phrase: '{phrase}'")
 
             # Set weight for phrase list (if method exists)
             if hasattr(self._phrase_list_grammar, 'setWeight'):
@@ -87,7 +84,6 @@ class AzureSTTServiceWithPhrases(AzureSTTService):
                 logger.debug(f"🎯 PhraseListGrammar.setWeight() not available in this Azure SDK version")
 
             logger.success(f"✅ Azure STT Phrase List Active: {len(self._phrase_list)} phrases with weight {self._phrase_list_weight}")
-            logger.info(f"🎯 Phrases should now be recognized better: {', '.join(self._phrase_list)}")
 
         except Exception as e:
             logger.error(f"❌ Failed to setup phrase list: {e}")
@@ -155,10 +151,6 @@ def create_deepgram_stt_service() -> DeepgramSTTService:
     """Create and configure Deepgram STT service"""
     config = settings.deepgram_config
 
-    # ADD DEBUGGING LOGS
-    logger.debug(f"🔍 Creating Deepgram STT with API key: {config['api_key'][:10]}...")
-    logger.debug(f"🔍 Deepgram config: {config}")
-
     try:
         stt_service = DeepgramSTTService(
             api_key=config["api_key"],
@@ -198,10 +190,6 @@ def create_azure_stt_service() -> "AzureSTTServiceWithPhrases":
         raise ImportError("Azure STT service not available")
 
     config = settings.azure_stt_config
-
-    # ADD DEBUGGING LOGS
-    logger.debug(f"🔍 Creating Azure STT with region: {config['region']}")
-    logger.debug(f"🔍 Azure STT config: {config}")
 
     try:
         # Prepare service parameters

@@ -185,14 +185,24 @@ async def send_escalation_direct(
         # Serialize the stop event manually and send directly via WebSocket
         # (TalkdeskControlFrame is a ControlFrame which pipeline doesn't route to serializer)
         import json
-        stop_message = json.dumps({
+        stream_sid = flow_manager.state.get("stream_sid", "")
+        stop_payload = {
             "event": "stop",
-            "streamSid": flow_manager.state.get("stream_sid", ""),
+            "streamSid": stream_sid,
             "stop": {
                 "command": "escalate",
                 "ringGroup": ring_group
             }
-        })
+        }
+        stop_message = json.dumps(stop_payload)
+
+        logger.info("=" * 60)
+        logger.info("📨 ESCALATION STOP MESSAGE TO TALKDESK:")
+        logger.info(f"   streamSid: {stream_sid}")
+        logger.info(f"   command: escalate")
+        logger.info(f"   ringGroup: {ring_group}")
+        logger.info(f"   Full payload: {stop_message}")
+        logger.info("=" * 60)
 
         # Send directly via the output transport's WebSocket client
         output_transport = transport.output()

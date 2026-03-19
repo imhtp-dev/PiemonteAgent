@@ -162,12 +162,15 @@ async def report_to_talkdesk(flow_manager, call_extractor):
             "duration_seconds": int(call_extractor._calculate_duration() or 0)
         }
 
-        logger.info(f"📊 Talkdesk payload prepared:")
+        logger.info("=" * 60)
+        logger.info("📊 TALKDESK REPORT PAYLOAD:")
         logger.info(f"   Interaction ID: {call_data['interaction_id']}")
         logger.info(f"   Sentiment: {call_data['sentiment']}")
-        logger.info(f"   Service: {call_data['service']}")
+        logger.info(f"   Service (queue): {call_data['service']}")
         logger.info(f"   Duration: {call_data['duration_seconds']}s")
-        logger.info(f"   Summary: {call_data['summary'][:100]}...")
+        logger.info(f"   Summary: {call_data['summary']}")
+        logger.info(f"   Full payload: {call_data}")
+        logger.info("=" * 60)
 
         # Send to Talkdesk
         from services.talkdesk_service import send_to_talkdesk
