@@ -192,6 +192,13 @@ async def send_escalation_direct(
         await transport.output().queue_frame(frame, FrameDirection.DOWNSTREAM)
 
         logger.info(f"✅ Direct escalation frame sent to Talkdesk")
+
+        # Now close the pipeline — stop frame already sent, safe to end
+        await asyncio.sleep(0.5)  # Brief pause to ensure stop frame is flushed
+        from pipecat.frames.frames import EndFrame
+        await transport.output().queue_frame(EndFrame(), FrameDirection.DOWNSTREAM)
+        logger.info(f"✅ EndFrame sent — pipeline closing after escalation")
+
         return True
 
     except Exception as e:
