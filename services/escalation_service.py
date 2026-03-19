@@ -182,21 +182,29 @@ async def send_escalation_direct(
         # Wait for TTS farewell to flush before sending stop
         await asyncio.sleep(2)
 
-        frame = TalkdeskControlFrame(
-            action=TalkdeskControlAction.ESCALATE,
-            ring_group=ring_group
-        )
+        # Serialize the stop event manually and send directly via WebSocket
+        # (TalkdeskControlFrame is a ControlFrame which pipeline doesn't route to serializer)
+        import json
+        stop_message = json.dumps({
+            "event": "stop",
+            "streamSid": flow_manager.state.get("stream_sid", ""),
+            "stop": {
+                "command": "escalate",
+                "ringGroup": ring_group
+            }
+        })
 
-        # Push through output transport — serializer converts to Talkdesk stop event
-        from pipecat.processors.frame_processor import FrameDirection
-        await transport.output().queue_frame(frame, FrameDirection.DOWNSTREAM)
+        # Send directly via the output transport's WebSocket client
+        output_transport = transport.output()
+        await output_transport._client.send(stop_message)
 
-        logger.info(f"✅ Direct escalation frame sent to Talkdesk")
+        logger.info(f"✅ Direct escalation stop message sent to Talkdesk")
 
-        # Now close the pipeline — stop frame already sent, safe to end
-        await asyncio.sleep(0.5)  # Brief pause to ensure stop frame is flushed
+        # Now close the pipeline
+        await asyncio.sleep(0.5)
         from pipecat.frames.frames import EndFrame
-        await transport.output().queue_frame(EndFrame(), FrameDirection.DOWNSTREAM)
+        from pipecat.processors.frame_processor import FrameDirection
+        await output_transport.queue_frame(EndFrame(), FrameDirection.DOWNSTREAM)
         logger.info(f"✅ EndFrame sent — pipeline closing after escalation")
 
         return True
