@@ -4,6 +4,7 @@ Pipeline components setup for TTS, STT, and LLM services
 
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+from pipecat.services.elevenlabs.stt import ElevenLabsRealtimeSTTService, CommitStrategy
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair, LLMUserAggregatorParams
@@ -135,14 +136,22 @@ class AzureSTTServiceWithPhrases(AzureSTTService):
             )
 
 
-def create_stt_service() -> Union[DeepgramSTTService, "AzureSTTServiceWithPhrases"]:
-    """Create and configure STT service based on provider setting"""
+def create_stt_service() -> Union[DeepgramSTTService, "AzureSTTServiceWithPhrases", ElevenLabsRealtimeSTTService]:
+    """Create and configure STT service based on provider setting.
+
+    Supported providers (STT_PROVIDER env var):
+    - deepgram (default): Deepgram Nova-3 with Italian keyterm boosting
+    - azure: Azure Speech-to-Text with phrase list support
+    - elevenlabs: ElevenLabs Scribe V2 Realtime (manual commit, Pipecat VAD)
+    """
     provider = settings.stt_provider
 
     logger.info(f"🎙️ Creating {provider.upper()} STT service")
 
     if provider == "azure":
         return create_azure_stt_service()
+    elif provider == "elevenlabs":
+        return create_elevenlabs_stt_service()
     else:
         return create_deepgram_stt_service()
 
@@ -230,6 +239,36 @@ def create_azure_stt_service() -> "AzureSTTServiceWithPhrases":
     except Exception as e:
         # ADD ERROR LOG
         logger.error(f"❌ Failed to create Azure STT service: {e}")
+        raise
+
+
+def create_elevenlabs_stt_service() -> ElevenLabsRealtimeSTTService:
+    """Create and configure ElevenLabs Scribe V2 Realtime STT service.
+
+    Uses MANUAL commit strategy so Pipecat's Silero VAD controls when to
+    finalize transcripts. This keeps Smart Turn V3 working and maintains
+    consistent behavior with Deepgram/Azure STT providers.
+    """
+    config = settings.elevenlabs_stt_config
+
+    try:
+        stt_service = ElevenLabsRealtimeSTTService(
+            api_key=config["api_key"],
+            model=config["model"],
+            audio_passthrough=True,  # Pass raw audio frames through for AudioBufferProcessor
+            params=ElevenLabsRealtimeSTTService.InputParams(
+                language_code=config["language_code"],
+                commit_strategy=CommitStrategy.MANUAL,
+                include_timestamps=config["include_timestamps"],
+                enable_logging=config["enable_logging"],
+            ),
+        )
+
+        logger.success("✅ ElevenLabs Scribe V2 Realtime STT service created successfully")
+        return stt_service
+
+    except Exception as e:
+        logger.error(f"❌ Failed to create ElevenLabs STT service: {e}")
         raise
 
 

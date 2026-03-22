@@ -4,7 +4,7 @@ Cost tracking for voice agent calls.
 Calculates per-call and per-minute costs for:
 - LLM (OpenAI GPT-4.1): token-based pricing
 - TTS (ElevenLabs eleven_multilingual_v2): character-based pricing
-- STT (Azure Speech / Deepgram Nova-3): duration-based pricing
+- STT (Azure Speech / Deepgram Nova-3 / ElevenLabs Scribe V2): duration-based pricing
 
 Pricing sources (verify periodically):
 - Azure STT: https://azure.microsoft.com/en-us/pricing/details/cognitive-services/speech-services/
@@ -42,6 +42,11 @@ AZURE_STT_PER_SECOND = AZURE_STT_PER_MINUTE / 60
 DEEPGRAM_PER_MINUTE = 0.0077                  # $0.0077 per minute streaming
 DEEPGRAM_PER_SECOND = DEEPGRAM_PER_MINUTE / 60
 
+# ElevenLabs Scribe V2 Realtime (streaming)
+ELEVENLABS_STT_PER_HOUR = 0.48               # $0.48 per hour (10hr tier)
+ELEVENLABS_STT_PER_MINUTE = ELEVENLABS_STT_PER_HOUR / 60
+ELEVENLABS_STT_PER_SECOND = ELEVENLABS_STT_PER_MINUTE / 60
+
 # Azure VM hosting cost (estimated, amortized per minute)
 # Adjust based on actual VM size and monthly cost
 AZURE_VM_MONTHLY_COST = float(__import__('os').getenv("AZURE_VM_MONTHLY_COST", "150"))
@@ -56,7 +61,7 @@ class CallCost:
     tts_characters: int = 0
     stt_duration_seconds: float = 0.0
     call_duration_seconds: float = 0.0
-    stt_provider: str = "azure"  # "azure" or "deepgram"
+    stt_provider: str = "azure"  # "azure", "deepgram", or "elevenlabs"
 
     # Computed costs (USD)
     llm_cost: float = 0.0
@@ -81,6 +86,8 @@ class CallCost:
         stt_seconds = self.stt_duration_seconds or self.call_duration_seconds
         if self.stt_provider == "azure":
             self.stt_cost = stt_seconds * AZURE_STT_PER_SECOND
+        elif self.stt_provider == "elevenlabs":
+            self.stt_cost = stt_seconds * ELEVENLABS_STT_PER_SECOND
         else:
             self.stt_cost = stt_seconds * DEEPGRAM_PER_SECOND
 
@@ -137,7 +144,7 @@ def calculate_call_cost(
         tts_characters: Total TTS characters synthesized
         stt_duration_seconds: Total STT processing time (or use call_duration as proxy)
         call_duration_seconds: Total call duration
-        stt_provider: "azure" or "deepgram"
+        stt_provider: "azure", "deepgram", or "elevenlabs"
 
     Returns:
         CallCost with all costs calculated

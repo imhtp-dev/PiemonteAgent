@@ -112,6 +112,18 @@ class Settings:
         return base_phrases
 
     @property
+    def elevenlabs_stt_config(self) -> Dict[str, Any]:
+        """ElevenLabs Scribe V2 Realtime STT configuration"""
+        return {
+            "api_key": self.api_keys["elevenlabs"],  # Same key as TTS
+            "model": "scribe_v2_realtime",
+            "language_code": os.getenv("ELEVENLABS_STT_LANGUAGE", "ita"),
+            "commit_strategy": "manual",  # Pipecat Silero VAD controls commits (Smart Turn compatible)
+            "include_timestamps": False,
+            "enable_logging": True,
+        }
+
+    @property
     def elevenlabs_config(self) -> Dict[str, Any]:
         """ElevenLabs TTS configuration"""
         return {
