@@ -151,7 +151,7 @@ class Settings:
     def vad_config(self) -> Dict[str, Any]:
         """Voice Activity Detection configuration optimized for Nova-3"""
         return {
-            "start_secs": 0.2,
+            "start_secs": 0.15,
             "stop_secs": 0.5,
             "min_volume": 0.4
         }

@@ -11,7 +11,7 @@ from pipecat.processors.aggregators.llm_response_universal import LLMContextAggr
 from pipecat.turns.user_mute.function_call_user_mute_strategy import FunctionCallUserMuteStrategy
 from pipecat.frames.frames import StartFrame
 from pipeline.node_aware_mute import NodeAwareMuteStrategy
-from deepgram import LiveOptions
+from pipecat.services.deepgram.stt import LiveOptions
 from loguru import logger
 from typing import Union
 
@@ -352,6 +352,7 @@ def create_context_aggregator(
                 node_mute_strategy,
             ],
             user_turn_strategies=user_turn_strategies,
+            user_idle_timeout=10.0,  # Built-in idle detection (replaces deprecated UserIdleProcessor)
         ),
     )
     return aggregator, node_mute_strategy
