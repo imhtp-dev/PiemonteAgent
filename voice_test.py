@@ -203,9 +203,9 @@ class DailyTestConfig:
             "audio_in_filter": RNNoiseFilter(),
             "vad_analyzer": SileroVADAnalyzer(
                 params=VADParams(
-                    start_secs=0.1,    # Faster detection for testing
+                    start_secs=settings.vad_config["start_secs"],
                     stop_secs=vad_stop_secs,
-                    min_volume=0.2     # More sensitive for testing
+                    min_volume=settings.vad_config["min_volume"]
                 )
             )
         }

@@ -1170,7 +1170,7 @@ async def talkdesk_endpoint(websocket: WebSocket):
     logger.info(f"Caller Phone: {caller_phone or 'Not provided'}")
     logger.info(f"Interaction ID: {interaction_id or 'Not provided'}")
     logger.info(f"IVR Path: {ivr_path or 'Not provided'}")
-    logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
     # Variables for pipeline (pre-declare to avoid NameError in finally block)
     runner = None
