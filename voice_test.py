@@ -187,9 +187,6 @@ class DailyTestConfig:
         vad_stop_secs = 0.2 if settings.smart_turn_enabled else 0.3
         logger.info(f"VAD stop_secs={vad_stop_secs} (Smart Turn {'active' if settings.smart_turn_enabled else 'off'})")
 
-        # RNNoise filter for noise/echo reduction (free, open-source)
-        from pipecat.audio.filters.rnnoise_filter import RNNoiseFilter
-
         return {
             "audio_in_enabled": True,
             "audio_out_enabled": True,
@@ -200,12 +197,11 @@ class DailyTestConfig:
             "mic_enabled": True,
             "dial_in_timeout": 30,
             "connection_timeout": 30,
-            "audio_in_filter": RNNoiseFilter(),
             "vad_analyzer": SileroVADAnalyzer(
                 params=VADParams(
-                    start_secs=settings.vad_config["start_secs"],
+                    start_secs=0.1,    # Faster detection for testing
                     stop_secs=vad_stop_secs,
-                    min_volume=settings.vad_config["min_volume"]
+                    min_volume=0.2     # More sensitive for testing
                 )
             )
         }
@@ -381,6 +377,14 @@ class DailyHealthcareFlowTester:
 
         logger.info("✅ All services initialized")
 
+        # CREATE USER IDLE PROCESSOR FOR HANDLING TRANSCRIPTION FAILURES
+        from services.idle_handler import create_user_idle_processor
+        user_idle_processor = create_user_idle_processor(timeout_seconds=20.0)
+
+        # CREATE PROCESSING TIME TRACKER FOR SLOW RESPONSE DETECTION
+        from services.processing_time_tracker import create_processing_time_tracker
+        processing_tracker = create_processing_time_tracker()  # Reads from PROCESSING_TIME_THRESHOLD env var
+
         # CREATE TRANSCRIPT PROCESSOR FOR RECORDING CONVERSATIONS (IDENTICAL TO BOT.PY)
         transcript_processor = TranscriptProcessor()
 
@@ -427,9 +431,11 @@ class DailyHealthcareFlowTester:
         pipeline_components = [
             self.transport.input(),
             stt,
+            user_idle_processor,              # Add idle detection after STT (20s complete silence)
             transcript_processor.user(),      # Capture user transcriptions
             context_aggregator.user(),
             llm,
+            processing_tracker,               # MOVED HERE: After LLM, can see LLM output frames
             tts,
             self.transport.output(),
         ]
@@ -448,16 +454,18 @@ class DailyHealthcareFlowTester:
 
         logger.info("Healthcare Flow Pipeline structure:")
         logger.info("  1. Daily Input (WebRTC)")
-        logger.info("  2. STT")
-        logger.info("  3. TranscriptProcessor.user() - Capture user transcriptions")
-        logger.info("  4. Context Aggregator (User) [idle=10s, turn_stop=5s]")
-        logger.info("  5. OpenAI LLM (with flows)")
-        logger.info("  6. ElevenLabs TTS")
-        logger.info("  7. Daily Output (WebRTC)")
+        logger.info("  2. Deepgram STT")
+        logger.info("  3. UserIdleProcessor - Handle transcription failures & 20s silence")
+        logger.info("  4. TranscriptProcessor.user() - Capture user transcriptions")
+        logger.info("  5. Context Aggregator (User)")
+        logger.info("  6. OpenAI LLM (with flows)")
+        logger.info("  7. ProcessingTimeTracker - Speak if processing >3s")
+        logger.info("  8. ElevenLabs TTS")
+        logger.info("  9. Daily Output (WebRTC)")
         if self.audiobuffer:
-            logger.info("  8. AudioBufferProcessor - Capture user/bot audio")
-        logger.info(f"  {'9' if self.audiobuffer else '8'}. TranscriptProcessor.assistant()")
-        logger.info(f"  {'10' if self.audiobuffer else '9'}. Context Aggregator (Assistant)")
+            logger.info("  10. AudioBufferProcessor - Capture user/bot audio")
+        logger.info(f"  {'11' if self.audiobuffer else '10'}. TranscriptProcessor.assistant() - Capture assistant responses")
+        logger.info(f"  {'12' if self.audiobuffer else '11'}. Context Aggregator (Assistant)")
 
         # Create pipeline task with extended idle timeout for API calls and OpenTelemetry tracing enabled
         self.task = PipelineTask(
@@ -494,48 +502,6 @@ class DailyHealthcareFlowTester:
         # Link node-aware mute strategy to flow state and flow manager (must be after flow_manager creation)
         node_mute_strategy.set_flow_state(self.flow_manager.state)
         node_mute_strategy.set_flow_manager(self.flow_manager)
-
-        # ── Turn event handlers (same as bot.py) ──
-        @context_aggregator.user().event_handler("on_user_turn_stop_timeout")
-        async def on_user_turn_stop_timeout(aggregator):
-            logger.warning("⏰ Turn stop timeout — VAD fired but no transcript arrived")
-            from pipecat.frames.frames import LLMMessagesAppendFrame
-            message = {"role": "system", "content": "Continue."}
-            await aggregator.queue_frame(LLMMessagesAppendFrame([message], run_llm=True))
-
-        idle_retry_count = {"count": 0}
-
-        @context_aggregator.user().event_handler("on_user_turn_idle")
-        async def on_user_turn_idle(aggregator):
-            idle_retry_count["count"] += 1
-            count = idle_retry_count["count"]
-            lang = settings.language_config
-
-            if count == 1:
-                logger.info("🔇 User idle (1st) — gentle reminder")
-                msg = f"The user hasn't responded. Gently ask 'Mi scusi, non ho sentito la sua risposta. Può ripetere per favore?' {lang}"
-            elif count == 2:
-                logger.info("🔇 User idle (2nd) — check presence")
-                msg = f"The user hasn't responded twice. Ask if they're still there: 'Ci sei ancora?' {lang}"
-            elif count == 3:
-                logger.info("🔇 User idle (3rd) — final attempt")
-                msg = f"Final attempt. Ask one last time if they're still there. {lang}"
-            else:
-                logger.info("🔇 User idle (4th) — ending session")
-                msg = f"End the session gracefully due to extended inactivity. Say goodbye politely and invite them to call back. {lang}"
-                from pipecat.frames.frames import LLMMessagesAppendFrame, EndFrame
-                await aggregator.queue_frame(LLMMessagesAppendFrame([{"role": "system", "content": msg}], run_llm=True))
-                import asyncio
-                await asyncio.sleep(4)
-                await aggregator.queue_frame(EndFrame())
-                return
-
-            from pipecat.frames.frames import LLMMessagesAppendFrame
-            await aggregator.queue_frame(LLMMessagesAppendFrame([{"role": "system", "content": msg}], run_llm=True))
-
-        @context_aggregator.user().event_handler("on_user_turn_started")
-        async def on_user_turn_started(aggregator, strategy):
-            idle_retry_count["count"] = 0
 
         # Store business_status, session_id, and stream_sid in flow manager state (required for info agent)
         self.flow_manager.state["business_status"] = TEST_BUSINESS_STATUS

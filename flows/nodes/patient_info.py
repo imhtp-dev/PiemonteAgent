@@ -188,17 +188,11 @@ def create_recollect_address_node() -> NodeConfig:
 
 
 def create_silent_center_search_and_flow_node() -> NodeConfig:
-    """Center search + flow generation. Speaks brief wait message via pre_actions."""
+    """Silent node: center search + flow generation. No TTS, no pre_actions."""
     from flows.handlers.flow_handlers import perform_silent_center_search_and_generate_flow
 
     return NodeConfig(
         name="silent_center_search_processing",
-        pre_actions=[
-            {
-                "type": "tts_say",
-                "text": "Perfetto, sto cercando. Un attimo."
-            }
-        ],
         role_messages=[{
             "role": "system",
             "content": "Call perform_silent_center_search immediately."
