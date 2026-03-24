@@ -371,15 +371,14 @@ class DailyHealthcareFlowTester:
         stt = create_stt_service()
         tts = create_tts_service()
         llm = create_llm_service()
+        from services.idle_handler import IdleHandler, DEFAULT_IDLE_TIMEOUT
         context_aggregator, node_mute_strategy = create_context_aggregator(
-            llm, smart_turn_enabled=settings.smart_turn_enabled
+            llm,
+            smart_turn_enabled=settings.smart_turn_enabled,
+            user_idle_timeout=DEFAULT_IDLE_TIMEOUT,
         )
 
         logger.info("✅ All services initialized")
-
-        # CREATE USER IDLE PROCESSOR FOR HANDLING TRANSCRIPTION FAILURES
-        from services.idle_handler import create_user_idle_processor
-        user_idle_processor = create_user_idle_processor(timeout_seconds=20.0)
 
         # CREATE PROCESSING TIME TRACKER FOR SLOW RESPONSE DETECTION
         from services.processing_time_tracker import create_processing_time_tracker
@@ -427,15 +426,14 @@ class DailyHealthcareFlowTester:
         else:
             logger.info("🎙️ Audio recording DISABLED")
 
-        # CREATE PIPELINE WITH TRANSCRIPT PROCESSORS AND IDLE HANDLING
+        # CREATE PIPELINE (idle detection built into context_aggregator.user())
         pipeline_components = [
             self.transport.input(),
             stt,
-            user_idle_processor,              # Add idle detection after STT (20s complete silence)
             transcript_processor.user(),      # Capture user transcriptions
-            context_aggregator.user(),
+            context_aggregator.user(),        # Includes idle detection via user_idle_timeout
             llm,
-            processing_tracker,               # MOVED HERE: After LLM, can see LLM output frames
+            processing_tracker,               # After LLM, can see LLM output frames
             tts,
             self.transport.output(),
         ]
@@ -454,18 +452,17 @@ class DailyHealthcareFlowTester:
 
         logger.info("Healthcare Flow Pipeline structure:")
         logger.info("  1. Daily Input (WebRTC)")
-        logger.info("  2. Deepgram STT")
-        logger.info("  3. UserIdleProcessor - Handle transcription failures & 20s silence")
-        logger.info("  4. TranscriptProcessor.user() - Capture user transcriptions")
-        logger.info("  5. Context Aggregator (User)")
-        logger.info("  6. OpenAI LLM (with flows)")
-        logger.info("  7. ProcessingTimeTracker - Speak if processing >3s")
-        logger.info("  8. ElevenLabs TTS")
-        logger.info("  9. Daily Output (WebRTC)")
+        logger.info("  2. STT")
+        logger.info("  3. TranscriptProcessor.user()")
+        logger.info("  4. Context Aggregator (User) + idle detection")
+        logger.info("  5. OpenAI LLM (with flows)")
+        logger.info("  6. ProcessingTimeTracker")
+        logger.info("  7. ElevenLabs TTS")
+        logger.info("  8. Daily Output (WebRTC)")
         if self.audiobuffer:
-            logger.info("  10. AudioBufferProcessor - Capture user/bot audio")
-        logger.info(f"  {'11' if self.audiobuffer else '10'}. TranscriptProcessor.assistant() - Capture assistant responses")
-        logger.info(f"  {'12' if self.audiobuffer else '11'}. Context Aggregator (Assistant)")
+            logger.info("  9. AudioBufferProcessor")
+        logger.info(f"  {'10' if self.audiobuffer else '9'}. TranscriptProcessor.assistant()")
+        logger.info(f"  {'11' if self.audiobuffer else '10'}. Context Aggregator (Assistant)")
 
         # Create pipeline task with extended idle timeout for API calls and OpenTelemetry tracing enabled
         self.task = PipelineTask(
@@ -502,6 +499,20 @@ class DailyHealthcareFlowTester:
         # Link node-aware mute strategy to flow state and flow manager (must be after flow_manager creation)
         node_mute_strategy.set_flow_state(self.flow_manager.state)
         node_mute_strategy.set_flow_manager(self.flow_manager)
+
+        # Setup idle detection (built into aggregator)
+        idle_handler = IdleHandler()
+        user_aggregator = context_aggregator.user()
+
+        @user_aggregator.event_handler("on_user_turn_idle")
+        async def on_user_turn_idle(aggregator):
+            await idle_handler.handle_idle(aggregator)
+
+        @user_aggregator.event_handler("on_user_turn_started")
+        async def on_user_turn_started(aggregator, strategy):
+            idle_handler.reset()
+
+        logger.info(f"🕐 Idle detection enabled ({DEFAULT_IDLE_TIMEOUT}s timeout)")
 
         # Store business_status, session_id, and stream_sid in flow manager state (required for info agent)
         self.flow_manager.state["business_status"] = TEST_BUSINESS_STATUS

@@ -168,6 +168,8 @@ jobs:
             docker compose down
             echo "⏫ Starting new containers..."
             docker compose up -d
+            echo "🧹 Cleaning up dangling images..."
+            docker image prune -f
             echo "✅ Deployment complete"
             
             # Wait for services to start
@@ -223,6 +225,5 @@ jobs:
           echo "- **Backend**: ${{ steps.meta.outputs.backend == 'true' && '✅ Built' || '⏭️ Skipped' }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Access URLs:" >> $GITHUB_STEP_SUMMARY
-          echo "- 📞 **Voice WebSocket (bridge)**: ws://${{ env.AZURE_VM_HOST }}:8000/ws" >> $GITHUB_STEP_SUMMARY
           echo "- 📞 **Talkdesk Direct**: wss://piemonte.francecentral.cloudapp.azure.com/talkdesk" >> $GITHUB_STEP_SUMMARY
           echo "- 🏥 **Health Check**: http://${{ env.AZURE_VM_HOST }}:8000/health" >> $GITHUB_STEP_SUMMARY

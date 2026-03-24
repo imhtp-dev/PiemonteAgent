@@ -10,7 +10,7 @@ from pipecat.processors.aggregators.llm_response_universal import LLMContextAggr
 from pipecat.turns.user_mute.function_call_user_mute_strategy import FunctionCallUserMuteStrategy
 from pipecat.frames.frames import StartFrame
 from pipeline.node_aware_mute import NodeAwareMuteStrategy
-from deepgram import LiveOptions
+from pipecat.services.deepgram.stt import LiveOptions
 from loguru import logger
 from typing import Union
 
@@ -263,8 +263,9 @@ def create_llm_service() -> OpenAILLMService:
 def create_context_aggregator(
     llm_service: OpenAILLMService,
     smart_turn_enabled: bool = False,
+    user_idle_timeout: float = 0,
 ) -> tuple[LLMContextAggregatorPair, NodeAwareMuteStrategy]:
-    """Create context aggregator with mute strategies and optional smart turn.
+    """Create context aggregator with mute strategies, optional smart turn, and idle detection.
 
     Two mute strategies (OR logic — either triggers mute):
     - FunctionCallUserMuteStrategy: mutes during function call execution
@@ -272,6 +273,9 @@ def create_context_aggregator(
 
     When smart_turn_enabled=True, adds ML-based end-of-turn detection
     using LocalSmartTurnAnalyzerV3 (ONNX model, ~8MB).
+
+    user_idle_timeout: seconds before on_user_turn_idle fires (0 = disabled).
+    Built into aggregator — no separate UserIdleProcessor needed.
 
     Returns tuple of (aggregator, node_mute_strategy).
     Caller must call node_mute_strategy.set_flow_state(flow_manager.state)
@@ -313,6 +317,7 @@ def create_context_aggregator(
                 node_mute_strategy,
             ],
             user_turn_strategies=user_turn_strategies,
+            user_idle_timeout=user_idle_timeout,
         ),
     )
     return aggregator, node_mute_strategy

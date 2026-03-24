@@ -1,6 +1,13 @@
 """
 Processing Time Tracker for Healthcare Booking Agent
-Monitors response time and injects "processing" message if agent takes too long to respond
+Monitors response time and injects "processing" message if agent takes too long to respond.
+
+Key behavior:
+- Timer starts on UserStoppedSpeakingFrame (fast reaction)
+- Only injects "Attendi..." if a function call is active (real work happening)
+- If no LLM activity after threshold (noise/no transcript/no function call), stays silent
+- Stops timer when actual response arrives (LLMTextFrame or TTSSpeakFrame)
+- function_call_active flag persists across timer restarts (survives interruptions during API calls)
 """
 
 import asyncio
@@ -17,6 +24,7 @@ from pipecat.frames.frames import (
     LLMFullResponseStartFrame,
     LLMTextFrame,
     FunctionCallsStartedFrame,
+    FunctionCallResultFrame,
 )
 from config.settings import settings
 
@@ -24,76 +32,58 @@ from config.settings import settings
 class ProcessingTimeTracker(FrameProcessor):
     """
     Tracks processing time from when user stops speaking to when TTS response starts.
-    If processing takes longer than threshold, injects a "please wait" message.
+    If processing takes longer than threshold AND a function call is active,
+    injects a "please wait" message. Stays silent if no real work is happening.
     """
 
     def __init__(self, threshold_seconds: float = 3.0):
-        """
-        Initialize the processing time tracker
-
-        Args:
-            threshold_seconds: Seconds to wait before injecting processing message (default: 3.0)
-        """
         super().__init__()
         self._threshold = threshold_seconds
         self._processing_start_time: Optional[float] = None
         self._warning_spoken = False
         self._timer_task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
-        self._waiting_for_real_response = False  # Track if we're waiting for bot's real response
-        self._bot_is_responding = False  # Track if bot is currently generating/speaking a response
+        self._waiting_for_real_response = False
+        self._bot_is_responding = False
+        # Persists across timer restarts — only cleared when response cycle completes
+        self._function_call_active = False
 
         logger.debug(f"ProcessingTimeTracker initialized: {threshold_seconds}s threshold")
 
     async def process_frame(self, frame: Frame, direction):
-        """
-        Process frames flowing through the pipeline and monitor timing
-        """
         await super().process_frame(frame, direction)
 
-        # User stopped speaking - START TIMER IMMEDIATELY
-        # We're now AFTER LLM so we can't see TranscriptionFrame anymore
-        # We start timer here and LLMFullResponseStartFrame will stop it if LLM responds quickly
+        # User stopped speaking — START TIMER
         if isinstance(frame, UserStoppedSpeakingFrame):
-            # Only start timer if bot is NOT already responding
             if not self._bot_is_responding:
                 await self._start_timer()
-            else:
-                pass  # Bot already responding
 
-        # User started speaking again - cancel monitoring (user interrupted)
+        # User started speaking again — cancel timer task but preserve function_call_active
         elif isinstance(frame, UserStartedSpeakingFrame):
             await self._cancel_timer()
 
-        # LLM called a function — cancel timer. The handler will process and
-        # return a node transition; injecting TTS during that transition breaks
-        # pipecat-flows' node handoff (the new node's LLM prompt never fires).
+        # LLM called a function — mark real work happening, keep timer running
         elif isinstance(frame, FunctionCallsStartedFrame):
-            self._bot_is_responding = True
-            await self._stop_timer()
+            self._function_call_active = True
+            logger.debug("⏳ Function call started — timer continues, will inject message if slow")
 
-        # LLM started generating TEXT (actual response, not just function calls)
-        # This frame flows downstream (LLM → TTS) and our processor NOW sees it!
+        # LLM started generating TEXT (actual response arriving) — stop timer, clear all
         elif isinstance(frame, LLMTextFrame):
-            if not self._warning_spoken and not self._bot_is_responding:
-                # LLM is generating actual text response - bot is responding!
-                self._bot_is_responding = True  # Set flag IMMEDIATELY (no await, no lock)
-                await self._stop_timer()  # Then stop timer
-            # else: We already stopped timer or injected "Attendi..." message
+            if not self._bot_is_responding:
+                self._bot_is_responding = True
+                await self._stop_timer()
 
-        # TTS is about to speak - cancel timer immediately (Problem 2 fix)
+        # TTS is about to speak — stop timer (response is being spoken)
         elif isinstance(frame, TTSSpeakFrame):
-            # CRITICAL FIX: Set flag IMMEDIATELY, BEFORE any conditions or async operations
-            # This prevents race condition where timer loop acquires lock before we can set the flag
             if self._waiting_for_real_response:
-                # This is the bot's actual response following our "please wait" message
-                self._bot_is_responding = True  # Set flag FIRST (no await, no lock)
-                await self._stop_timer()  # Then do lock operations
+                # Bot's actual response following our "please wait" message
+                self._bot_is_responding = True
+                await self._stop_timer()
             elif not self._warning_spoken:
-                # This is the bot's response and we haven't injected a message yet
-                self._bot_is_responding = True  # Set flag FIRST (no await, no lock)
-                await self._stop_timer()  # Then do lock operations
-            # else: This is our own injected "Attendi..." message - DON'T mark bot as responding yet
+                # Bot's response before we needed to inject anything
+                self._bot_is_responding = True
+                await self._stop_timer()
+            # else: This is our own injected "Attendi..." message — don't mark as final response
 
             # Cancel timer after setting flag (redundant but safe)
             if self._timer_task and not self._timer_task.done():
@@ -102,13 +92,11 @@ class ProcessingTimeTracker(FrameProcessor):
                 except Exception as e:
                     logger.error(f"❌ Error cancelling timer: {e}")
 
-        # Pass frame through to next processor
         await self.push_frame(frame, direction)
 
     async def _start_timer(self):
-        """Start monitoring processing time when user stops speaking"""
+        """Start monitoring processing time. Preserves function_call_active flag."""
         async with self._lock:
-            # Cancel any existing timer
             if self._timer_task and not self._timer_task.done():
                 self._timer_task.cancel()
                 try:
@@ -116,25 +104,19 @@ class ProcessingTimeTracker(FrameProcessor):
                 except asyncio.CancelledError:
                     pass
 
-            # Reset state
             self._processing_start_time = time.time()
             self._warning_spoken = False
             self._waiting_for_real_response = False
-            self._bot_is_responding = False  # New query, bot hasn't responded yet
-
-            # Start background timer task
+            self._bot_is_responding = False
+            # NOTE: Do NOT reset _function_call_active here.
+            # A function call may still be running when timer restarts
+            # (e.g., STT transcription arrives mid-API-call, causing
+            # UserStartedSpeaking → cancel → UserStoppedSpeaking → new timer)
             self._timer_task = asyncio.create_task(self._check_processing_time())
 
-            pass  # Timer started
-
     async def _stop_timer(self):
-        """Stop monitoring when TTS starts (response is ready)"""
+        """Stop monitoring — response arrived. Clears ALL state including function_call_active."""
         async with self._lock:
-            if self._processing_start_time:
-                elapsed = time.time() - self._processing_start_time
-                pass  # Processing done
-
-            # Cancel timer task
             if self._timer_task and not self._timer_task.done():
                 self._timer_task.cancel()
                 try:
@@ -142,19 +124,17 @@ class ProcessingTimeTracker(FrameProcessor):
                 except asyncio.CancelledError:
                     pass
 
-            # Reset state
+            # Full reset — response cycle complete
             self._processing_start_time = None
             self._warning_spoken = False
             self._waiting_for_real_response = False
-            self._bot_is_responding = False  # Response complete, ready for new query
+            self._bot_is_responding = False
+            self._function_call_active = False
             self._timer_task = None
 
     async def _cancel_timer(self):
-        """Cancel monitoring when user interrupts"""
+        """Cancel timer (user interrupted). Preserves function_call_active flag."""
         async with self._lock:
-            pass  # Cancelled by user
-
-            # Cancel timer task
             if self._timer_task and not self._timer_task.done():
                 self._timer_task.cancel()
                 try:
@@ -162,38 +142,41 @@ class ProcessingTimeTracker(FrameProcessor):
                 except asyncio.CancelledError:
                     pass
 
-            # Reset state
             self._processing_start_time = None
             self._warning_spoken = False
             self._waiting_for_real_response = False
-            self._bot_is_responding = False  # Cancelled, ready for new query
+            self._bot_is_responding = False
+            # NOTE: Do NOT reset _function_call_active here.
+            # If an API call is in progress and STT fires a late transcription
+            # causing UserStartedSpeaking, we still want the next timer to know
+            # a function call is active.
             self._timer_task = None
 
     async def _check_processing_time(self):
         """
         Background task that checks elapsed time every 0.5 seconds.
-        Injects processing message if threshold is exceeded.
+        Only injects message if a function call is active (real work happening).
         """
         try:
             while True:
-                await asyncio.sleep(0.5)  # Check twice per second
+                await asyncio.sleep(0.5)
 
-                # Problem 2 fix: Check if bot is responding BEFORE checking threshold
-                # This prevents race condition where bot starts speaking but timer hasn't been cancelled yet
                 if self._bot_is_responding:
-                    pass  # Bot responding, stop
                     break
 
-                # Check if we should inject warning message
                 if self._processing_start_time and not self._warning_spoken:
                     elapsed = time.time() - self._processing_start_time
 
                     if elapsed > self._threshold:
-                        await self._inject_processing_message()
-                        break  # Exit loop after speaking once
+                        if self._function_call_active:
+                            await self._inject_processing_message()
+                        else:
+                            logger.debug(
+                                f"⏭️ Threshold exceeded ({elapsed:.1f}s) but no function call active — skipping injection"
+                            )
+                        break
 
         except asyncio.CancelledError:
-            # Timer was cancelled (normal flow)
             pass
         except Exception as e:
             logger.error(f"❌ Error in processing time checker: {e}")
@@ -202,41 +185,30 @@ class ProcessingTimeTracker(FrameProcessor):
         """Inject 'please wait' message into TTS pipeline"""
         async with self._lock:
             if self._warning_spoken:
-                return  # Already spoken, don't repeat
-
-            # Problem 2 fix: Safety check - abort if timer was cancelled (race condition)
-            if not self._timer_task or self._timer_task.cancelled():
-                pass  # Timer cancelled before injection
                 return
 
-            # CRITICAL FIX: Check if bot is responding AFTER acquiring lock
-            # This handles race condition where TTSSpeakFrame set flag while we were waiting for lock
+            if not self._timer_task or self._timer_task.cancelled():
+                return
+
+            # Safety: abort if bot started responding while we waited for lock
             if self._bot_is_responding:
-                pass  # Bot responding, skip injection
                 return
 
             elapsed = time.time() - self._processing_start_time if self._processing_start_time else 0
-            logger.info(f"🔔 Processing exceeded {self._threshold}s threshold (elapsed: {elapsed:.2f}s) - injecting message")
+            logger.info(f"🔔 Function call taking {elapsed:.1f}s — injecting processing message")
 
-            # Get language-specific message
             language_instruction = settings.language_config
             message = "Attendi qualche secondo che sto cercando" if "Italian" in language_instruction else "Please wait a few seconds while I search"
 
-            # Mark as spoken BEFORE injecting to prevent race conditions
             self._warning_spoken = True
-            # Now we're waiting for the bot's real response (next TTSSpeakFrame will be the real one)
             self._waiting_for_real_response = True
-            # Bot IS responding (processing in background even while we speak "Attendi...")
-            self._bot_is_responding = True
 
-            # Inject TTS message into pipeline
             await self.push_frame(TTSSpeakFrame(message))
 
-            logger.success(f"✅ Processing message injected: '{message}', waiting for bot's real response")
+            logger.success(f"✅ Processing message injected: '{message}'")
 
     async def cleanup(self):
         """Cleanup when processor is destroyed"""
-        # Cancel any running timer
         if self._timer_task and not self._timer_task.done():
             self._timer_task.cancel()
             try:
@@ -257,7 +229,6 @@ def create_processing_time_tracker(threshold_seconds: float = None) -> Processin
     Returns:
         ProcessingTimeTracker: Configured processor
     """
-    # Read from environment variable if not explicitly provided
     if threshold_seconds is None:
         threshold_seconds = float(os.getenv("PROCESSING_TIME_THRESHOLD", "4.0"))
 
