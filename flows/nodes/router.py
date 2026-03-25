@@ -18,6 +18,19 @@ from pipecat_flows.types import ContextStrategy, ContextStrategyConfig
 from config.settings import settings
 
 
+def _get_booking_status_prompt() -> str:
+    """Build booking availability prompt section based on BOOKING_ENABLED flag."""
+    if settings.booking_enabled:
+        return ""  # No extra prompt needed — booking works normally
+    return """
+🚫 **BOOKING STATUS: DISABLED**
+- You CANNOT start bookings directly. The automated booking system is not active.
+- If patient wants to book ANY service → call start_booking as normal. The system will automatically transfer them to a human operator.
+- You CAN still: answer info questions, provide pricing (check_service_price), check exams, check clinic hours.
+- After providing pricing, if patient wants to book → the system will handle the transfer automatically.
+"""
+
+
 def create_router_node(reset_context: bool = False, business_status: str = "open") -> NodeConfig:
     """
     Create the initial router node.
@@ -45,13 +58,15 @@ def create_router_node(reset_context: bool = False, business_status: str = "open
 - Transfers to human operators are available.
 """
 
+    booking_status_prompt = _get_booking_status_prompt()
+
     node = NodeConfig(
         name="router",
         role_messages=[{
             "role": "system",
             "content": f"""You are Voilà, a helpful virtual assistant for Serba Healthcare (Piemonte, Italy).
 You are the initial contact point for incoming calls.
-{transfer_status_prompt}
+{transfer_status_prompt}{booking_status_prompt}
 **Your capabilities (tools available):**
 1. knowledge_base_new - Answer FAQs, preparations, documents, booking process questions
 2. get_competitive_pricing - Agonistic sports visit pricing (needs age, gender, sport, region)

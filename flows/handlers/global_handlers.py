@@ -15,6 +15,7 @@ from pipecat_flows import FlowManager, NodeConfig, FlowArgs
 
 # Import services from new locations
 from services.call_data_extractor import get_call_extractor
+from config.settings import settings
 
 
 def _add_booking_reminder(result: Dict[str, Any], flow_manager: FlowManager) -> Dict[str, Any]:
@@ -614,6 +615,24 @@ async def global_start_booking(
                 "service_request": service_request,
                 "redirected_to_transfer": True,
                 "message": "La prenotazione per visite di medicina sportiva non è disponibile tramite questo servizio. Ti trasferisco a un operatore."
+            }, create_transfer_node()
+
+        # CHECK: Is booking disabled? (initial release — info + pricing only)
+        if not settings.booking_enabled:
+            logger.info(f"🚫 Booking disabled — escalating to operator for: '{service_request}'")
+
+            flow_manager.state["transfer_reason"] = f"Prenotazione richiesta (booking disabilitato): {service_request}"
+            flow_manager.state["transfer_requested"] = True
+            flow_manager.state["transfer_type"] = "booking_disabled"
+
+            await _handle_transfer_escalation(flow_manager)
+
+            from flows.nodes.transfer import create_transfer_node
+            return {
+                "success": True,
+                "service_request": service_request,
+                "redirected_to_transfer": True,
+                "message": "Per la prenotazione la trasferisco a un operatore che potrà aiutarti."
             }, create_transfer_node()
 
         # Normal booking flow

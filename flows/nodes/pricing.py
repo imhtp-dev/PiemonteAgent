@@ -60,6 +60,18 @@ def create_price_info_node(slots: List[Dict[str, Any]], service_name: str, cente
     logger.info(f"💰 Price info node: {service_name} @ {center_name}")
     logger.info(f"   Range: {min(all_prices) if all_prices else 'N/A'}-{max(all_prices) if all_prices else 'N/A'}€ ({len(slots)} slots)")
 
+    # Build post-pricing prompt based on booking availability
+    if settings.booking_enabled:
+        post_price_prompt = """After presenting the prices, ask the patient if they would like to book this service.
+If yes → call proceed_to_booking.
+If no or they want something else → call end_price_inquiry."""
+        proceed_description = "Patient wants to book this service after seeing the price"
+    else:
+        post_price_prompt = """After presenting the prices, ask the patient if they would like to book this service.
+If yes → call proceed_to_booking. The patient will be transferred to a human operator who will complete the booking.
+If no or they want something else → call end_price_inquiry."""
+        proceed_description = "Patient wants to book this service — transfer to human operator for booking"
+
     return NodeConfig(
         name="price_info",
         role_messages=[{
@@ -69,9 +81,7 @@ def create_price_info_node(slots: List[Dict[str, Any]], service_name: str, cente
 {price_range_text}
 
 Speak naturally and conversationally. Do not use numbered lists.
-After presenting the prices, ask the patient if they would like to book this service.
-If yes → call proceed_to_booking.
-If no or they want something else → call end_price_inquiry.
+{post_price_prompt}
 {settings.language_config}"""
         }],
         task_messages=[{
@@ -82,7 +92,7 @@ If no or they want something else → call end_price_inquiry.
             FlowsFunctionSchema(
                 name="proceed_to_booking",
                 handler=handle_proceed_to_booking,
-                description="Patient wants to book this service after seeing the price",
+                description=proceed_description,
                 properties={},
                 required=[]
             ),

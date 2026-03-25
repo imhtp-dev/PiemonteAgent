@@ -6,15 +6,37 @@ from typing import Dict, Any, Tuple
 from loguru import logger
 
 from pipecat_flows import FlowManager, NodeConfig, FlowArgs
+from config.settings import settings
 
 
 async def handle_proceed_to_booking(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
     """Patient wants to book after seeing price — switch to booking flow.
 
+    When booking is disabled (initial release), escalates to operator instead.
+    Operator receives full transcript summary (service, price, patient info).
+
     All patient data (address, gender, DOB, center) already in state.
     Sorting API skipped (legacy mode) — service UUIDs already known.
     Goes to datetime collection → slot search → cerba → summary → patient details → booking.
     """
+    # CHECK: Is booking disabled? (initial release — info + pricing only)
+    if not settings.booking_enabled:
+        logger.info("🚫 Booking disabled — escalating to operator after price inquiry")
+
+        flow_manager.state["transfer_reason"] = "Prenotazione richiesta dopo verifica prezzo (booking disabilitato)"
+        flow_manager.state["transfer_requested"] = True
+        flow_manager.state["transfer_type"] = "booking_disabled"
+
+        from flows.handlers.global_handlers import _handle_transfer_escalation
+        await _handle_transfer_escalation(flow_manager)
+
+        from flows.nodes.transfer import create_transfer_node
+        return {
+            "success": True,
+            "redirected_to_transfer": True,
+            "message": "Per la prenotazione la trasferisco a un operatore che potrà aiutarti."
+        }, create_transfer_node()
+
     # Switch intent from price_inquiry to booking
     flow_manager.state["intent"] = "booking"
     flow_manager.state["booking_scenario"] = "legacy"

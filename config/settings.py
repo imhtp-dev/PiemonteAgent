@@ -208,6 +208,11 @@ class Settings:
         }
 
     @property
+    def booking_enabled(self) -> bool:
+        """Whether booking flows are enabled. When False, booking requests escalate to operator."""
+        return os.getenv("BOOKING_ENABLED", "false").lower() == "true"
+
+    @property
     def smart_turn_enabled(self) -> bool:
         """Whether Smart Turn V3 ML-based end-of-turn detection is enabled"""
         return os.getenv("SMART_TURN_ENABLED", "true").lower() == "true"
