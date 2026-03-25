@@ -619,6 +619,17 @@ async def global_start_booking(
 
         # CHECK: Is booking disabled? (initial release — info + pricing only)
         if not settings.booking_enabled:
+            business_status = flow_manager.state.get("business_status", "open")
+
+            # If call center is closed, don't escalate — tell patient to call back
+            if business_status in ("close", "after_hours"):
+                logger.info(f"🚫 Booking disabled + call center closed — cannot escalate for: '{service_request}'")
+                return {
+                    "success": True,
+                    "service_request": service_request,
+                    "message": "Mi dispiace, la prenotazione per questo servizio richiede un operatore, ma il call center è attualmente chiuso. La invito a richiamare durante gli orari di apertura."
+                }, None  # Stay at current node
+
             logger.info(f"🚫 Booking disabled — escalating to operator for: '{service_request}'")
 
             flow_manager.state["transfer_reason"] = f"Prenotazione richiesta (booking disabilitato): {service_request}"

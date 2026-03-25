@@ -21,6 +21,17 @@ async def handle_proceed_to_booking(args: FlowArgs, flow_manager: FlowManager) -
     """
     # CHECK: Is booking disabled? (initial release — info + pricing only)
     if not settings.booking_enabled:
+        business_status = flow_manager.state.get("business_status", "open")
+
+        # If call center is closed, don't escalate — tell patient to call back
+        if business_status in ("close", "after_hours"):
+            logger.info("🚫 Booking disabled + call center closed — cannot escalate after price inquiry")
+            from flows.nodes.router import create_router_node
+            return {
+                "success": True,
+                "message": "Mi dispiace, la prenotazione per questo servizio richiede un operatore, ma il call center è attualmente chiuso. La invito a richiamare durante gli orari di apertura."
+            }, create_router_node(business_status=business_status)
+
         logger.info("🚫 Booking disabled — escalating to operator after price inquiry")
 
         flow_manager.state["transfer_reason"] = "Prenotazione richiesta dopo verifica prezzo (booking disabilitato)"
