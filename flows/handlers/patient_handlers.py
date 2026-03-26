@@ -10,13 +10,26 @@ from pipecat_flows import FlowManager, NodeConfig, FlowArgs
 
 
 async def collect_address_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
-    """Collect address and dynamically transition to gender collection"""
+    """Collect address and dynamically transition to gender collection.
+
+    For price_inquiry intent: hardcodes gender/DOB and skips to center search
+    (gender and DOB are required by Cerba API but irrelevant for pricing).
+    """
     address = args.get("address", "").strip()
-    
+
     if address:
         flow_manager.state["patient_address"] = address
         logger.info(f"📍 Address collected: {address}")
-        
+
+        # Price inquiry: skip gender, DOB, and verification — go straight to center search
+        if flow_manager.state.get("intent") == "price_inquiry":
+            flow_manager.state["patient_gender"] = "m"
+            flow_manager.state["patient_dob"] = "1980-01-01"
+            logger.info("💰 Price inquiry — hardcoded gender=m, dob=1980-01-01, skipping to center search")
+
+            from flows.nodes.booking import create_final_center_search_node
+            return {"success": True, "address": address}, create_final_center_search_node()
+
         from flows.nodes.patient_info import create_collect_gender_node
         return {"success": True, "address": address}, create_collect_gender_node()
     else:
