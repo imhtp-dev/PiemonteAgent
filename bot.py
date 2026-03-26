@@ -162,11 +162,51 @@ async def report_to_talkdesk(flow_manager, call_extractor):
         return False
 
 
+# HEARTBEAT — reports active_sessions count to Supabase every 10s
+
+_heartbeat_task: Optional[asyncio.Task] = None
+_HEARTBEAT_INTERVAL = 10  # seconds
+
+
+async def _heartbeat_loop():
+    """Background loop: upserts container status to tb_agent_status every 10s."""
+    from services.database import db
+
+    region = os.getenv("INFO_AGENT_REGION", "Lombardia")
+    instance_id = int(os.getenv("INSTANCE_ID", "1"))
+    max_capacity = settings.max_concurrent_calls
+
+    logger.info(f"💓 Heartbeat started: region={region} instance={instance_id} capacity={max_capacity}")
+
+    while True:
+        try:
+            current_calls = len(active_sessions)
+            await db.upsert_agent_status(region, instance_id, current_calls, max_capacity)
+            await db.update_daily_peak(region, current_calls)
+        except Exception as e:
+            logger.warning(f"⚠️ Heartbeat error: {e}")
+        await asyncio.sleep(_HEARTBEAT_INTERVAL)
+
+
+async def _set_offline():
+    """Mark this container as offline on shutdown."""
+    try:
+        from services.database import db
+        region = os.getenv("INFO_AGENT_REGION", "Lombardia")
+        instance_id = int(os.getenv("INSTANCE_ID", "1"))
+        await db.upsert_agent_status(region, instance_id, 0, settings.max_concurrent_calls, "offline")
+        logger.info("💔 Heartbeat: marked offline")
+    except Exception:
+        pass
+
+
 # LIFESPAN CONTEXT MANAGER
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events"""
+    global _heartbeat_task
+
     # Startup
     logger.info("🚀 Starting up Healthcare Flow Bot...")
 
@@ -188,10 +228,22 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Failed to initialize AI services: {e}")
         logger.warning("⚠️ Q&A management will not work without Pinecone")
 
+    # Start heartbeat background task
+    _heartbeat_task = asyncio.create_task(_heartbeat_loop())
+
     yield
 
     # Shutdown
     logger.info("🛑 Shutting down Healthcare Flow Bot...")
+
+    # Stop heartbeat and mark offline
+    if _heartbeat_task:
+        _heartbeat_task.cancel()
+        try:
+            await _heartbeat_task
+        except asyncio.CancelledError:
+            pass
+    await _set_offline()
 
     # Close Supabase database connection
     try:
@@ -607,6 +659,14 @@ async def talkdesk_endpoint(websocket: WebSocket):
 
             # INSERT initial Supabase row (replaces bridge's save_call_to_supabase)
             await call_extractor.insert_initial_row()
+
+            # Increment daily total calls for monitoring dashboard
+            try:
+                from services.database import db
+                region = os.getenv("INFO_AGENT_REGION", "Lombardia")
+                await db.increment_daily_total_calls(region)
+            except Exception:
+                pass
 
             if audiobuffer:
                 await audiobuffer.start_recording()

@@ -213,6 +213,11 @@ class Settings:
         return os.getenv("BOOKING_ENABLED", "false").lower() == "true"
 
     @property
+    def max_concurrent_calls(self) -> int:
+        """Max concurrent calls per container. Used for monitoring dashboard."""
+        return int(os.getenv("MAX_CONCURRENT_CALLS", "5"))
+
+    @property
     def smart_turn_enabled(self) -> bool:
         """Whether Smart Turn V3 ML-based end-of-turn detection is enabled"""
         return os.getenv("SMART_TURN_ENABLED", "true").lower() == "true"

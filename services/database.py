@@ -140,6 +140,67 @@ class Database:
                 logger.error(f"   Args: {args}")
                 raise
     
+    async def upsert_agent_status(
+        self, region: str, instance_id: int, active_calls: int, max_capacity: int, status: str = "online"
+    ) -> None:
+        """Upsert heartbeat row for this container into tb_agent_status."""
+        if not self.pool:
+            return  # Silently skip if no DB — monitoring is non-critical
+        try:
+            await self.execute(
+                """
+                INSERT INTO tb_agent_status (region, instance_id, active_calls, max_capacity, status, last_heartbeat)
+                VALUES ($1, $2, $3, $4, $5, NOW())
+                ON CONFLICT (region, instance_id)
+                DO UPDATE SET
+                    active_calls = $3,
+                    max_capacity = $4,
+                    status = $5,
+                    last_heartbeat = NOW()
+                """,
+                region, instance_id, active_calls, max_capacity, status,
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Heartbeat upsert failed: {e}")
+
+    async def update_daily_peak(self, region: str, current_calls: int) -> None:
+        """Update today's peak concurrent calls if current exceeds recorded peak."""
+        if not self.pool or current_calls == 0:
+            return
+        try:
+            await self.execute(
+                """
+                INSERT INTO tb_daily_peak_calls (region, date, peak_concurrent, total_calls)
+                VALUES ($1, CURRENT_DATE, $2, 0)
+                ON CONFLICT (region, date)
+                DO UPDATE SET
+                    peak_concurrent = GREATEST(tb_daily_peak_calls.peak_concurrent, $2),
+                    updated_at = NOW()
+                """,
+                region, current_calls,
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Daily peak update failed: {e}")
+
+    async def increment_daily_total_calls(self, region: str) -> None:
+        """Increment today's total call count (call on each new call start)."""
+        if not self.pool:
+            return
+        try:
+            await self.execute(
+                """
+                INSERT INTO tb_daily_peak_calls (region, date, peak_concurrent, total_calls)
+                VALUES ($1, CURRENT_DATE, 0, 1)
+                ON CONFLICT (region, date)
+                DO UPDATE SET
+                    total_calls = tb_daily_peak_calls.total_calls + 1,
+                    updated_at = NOW()
+                """,
+                region,
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Daily total calls increment failed: {e}")
+
     async def transaction(self):
         """
         Get a transaction context manager
