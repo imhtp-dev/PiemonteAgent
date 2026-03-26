@@ -1,8 +1,9 @@
 """
-Price information node — presents service prices from slot API response
+Price information node — presents service prices and availability from slot API response
 """
 
 from typing import List, Dict, Any
+from datetime import datetime
 from pipecat_flows import NodeConfig, FlowsFunctionSchema
 from loguru import logger
 
@@ -10,8 +11,29 @@ from flows.handlers.pricing_handlers import handle_proceed_to_booking, handle_en
 from config.settings import settings
 
 
+def _extract_first_available_date(slots: List[Dict[str, Any]]) -> str:
+    """Extract the earliest available slot date from the slots list."""
+    earliest = None
+    for slot in slots:
+        start_time = slot.get("start_time", "")
+        if not start_time:
+            continue
+        try:
+            # Parse ISO format: "2026-03-28T09:00:00+00:00"
+            dt = datetime.fromisoformat(start_time)
+            if earliest is None or dt < earliest:
+                earliest = dt
+        except (ValueError, TypeError):
+            pass
+
+    if earliest:
+        # Format as readable date: "28 March 2026"
+        return earliest.strftime("%-d %B %Y")
+    return ""
+
+
 def create_price_info_node(slots: List[Dict[str, Any]], service_name: str, center_name: str) -> NodeConfig:
-    """Create node that presents price info extracted from slot response.
+    """Create node that presents price and availability info extracted from slot response.
 
     Args:
         slots: Slot API response (list of slot dicts with health_services[].price/cerba_card_price)
@@ -57,8 +79,17 @@ def create_price_info_node(slots: List[Dict[str, Any]], service_name: str, cente
     else:
         price_range_text = "Price information is not available at this time."
 
+    # Extract first available date
+    first_available = _extract_first_available_date(slots)
+    if first_available:
+        availability_text = f"The first available slot is on {first_available}."
+    else:
+        availability_text = ""
+
     logger.info(f"💰 Price info node: {service_name} @ {center_name}")
     logger.info(f"   Range: {min(all_prices) if all_prices else 'N/A'}-{max(all_prices) if all_prices else 'N/A'}€ ({len(slots)} slots)")
+    if first_available:
+        logger.info(f"   First available: {first_available}")
 
     # Build post-pricing prompt based on booking availability
     if settings.booking_enabled:
@@ -76,11 +107,13 @@ If no or they want something else → call end_price_inquiry."""
         name="price_info",
         role_messages=[{
             "role": "system",
-            "content": f"""Present the price information to the patient for {service_name} at {center_name}.
+            "content": f"""Present the price and availability information to the patient for {service_name} at {center_name}.
 
 {price_range_text}
+{availability_text}
 
 Speak naturally and conversationally. Do not use numbered lists.
+Present both the price and the first available date (if available) in one natural response.
 {post_price_prompt}
 {settings.language_config}"""
         }],

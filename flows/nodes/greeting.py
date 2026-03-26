@@ -29,8 +29,8 @@ def create_greeting_node(initial_booking_request: str = None, additional_service
             )
         elif intent == "price_inquiry":
             acknowledge = (
-                f'The user wants to know the price of: "{initial_booking_request}"\n\n'
-                f'First say: "Per poterti dare il prezzo dovrò chiederti alcune informazioni."\n'
+                f'The user wants to know about: "{initial_booking_request}"\n\n'
+                f'First say: "Per verificare dovrò chiederti alcune informazioni."\n'
                 f'Then IMMEDIATELY call search_health_services with search_term="{initial_booking_request}".\n'
                 f'Do NOT ask the user what they want - they already told you. {settings.language_config}'
             )
