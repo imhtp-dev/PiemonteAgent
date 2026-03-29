@@ -524,8 +524,9 @@ async def global_check_service_price(
     """
     try:
         service_request = args.get("service_request", "").strip()
+        center_hint = (args.get("center_hint") or "").strip()
 
-        logger.info(f"💰 [GLOBAL] Check Service Price: {service_request}")
+        logger.info(f"💰 [GLOBAL] Check Service Price: {service_request}" + (f" | center_hint={center_hint}" if center_hint else ""))
 
         # CHECK: Sports medicine services cannot be priced via this agent
         if _is_unbookable_service(service_request):
@@ -550,6 +551,8 @@ async def global_check_service_price(
         flow_manager.state["booking_in_progress"] = True
         flow_manager.state["initial_booking_request"] = service_request
         flow_manager.state["current_agent"] = "booking"
+        if center_hint:
+            flow_manager.state["center_hint"] = center_hint
 
         # Track for analytics
         session_id = flow_manager.state.get("session_id")
@@ -568,7 +571,7 @@ async def global_check_service_price(
             "success": True,
             "service_request": service_request,
             "message": "Starting price inquiry"
-        }, create_greeting_node(initial_booking_request=service_request if service_request else None, intent="price_inquiry")
+        }, create_greeting_node(initial_booking_request=service_request if service_request else None, intent="price_inquiry", center_hint=center_hint or None)
 
     except Exception as e:
         logger.error(f"❌ Check service price error: {e}")
@@ -820,6 +823,20 @@ async def global_cancel_and_restart(
             "current_search_radius", "intent",
             "auto_date", "auto_start_time",
             "llm_interpretation_reasoning", "llm_interpretation_summary",
+            # Center hint
+            "center_hint",
+            # Doctor-specific booking
+            "doctor_booking_mode", "requested_doctor_name",
+            "selected_providing_entity", "providing_entity_uuid",
+            # Address retry
+            "address_retry_count", "expanded_search", "search_radius_used",
+            # Sports medicine
+            "sports_medicine_mode", "is_agonistic", "is_b1_protocol",
+            "mds_id_group", "mds_id_sede", "mds_sede_name",
+            "mds_selected_facility", "mds_facilities",
+            "mds_tipo_ab", "mds_slots", "mds_slot_id", "mds_slot_date",
+            "mds_price_info", "mds_validation_note", "mds_patient",
+            "resolved_region", "geocode_result",
         ]
         for key in booking_keys:
             flow_manager.state.pop(key, None)

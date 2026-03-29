@@ -66,12 +66,19 @@ async def handle_proceed_to_booking(args: FlowArgs, flow_manager: FlowManager) -
 
 async def handle_end_price_inquiry(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
     """Patient doesn't want to book — clear booking state and return to router."""
-    # Clear booking-related state
+    # Clear all price inquiry state to prevent bleed into next flow
+    price_inquiry_keys = [
+        "intent", "booking_in_progress", "initial_booking_request", "current_agent",
+        "selected_center", "available_slots", "pending_slot_search_params",
+        "selected_services", "services_found", "current_search_term",
+        "center_hint", "patient_address", "patient_gender", "patient_dob",
+        "final_health_centers", "pending_center_search_params",
+        "booking_scenario", "preferred_date", "preferred_time",
+        "address_retry_count", "current_search_radius", "search_radius_used", "expanded_search",
+    ]
+    for key in price_inquiry_keys:
+        flow_manager.state.pop(key, None)
     flow_manager.state["booking_in_progress"] = False
-    flow_manager.state.pop("intent", None)
-    flow_manager.state.pop("selected_center", None)
-    flow_manager.state.pop("available_slots", None)
-    flow_manager.state.pop("pending_slot_search_params", None)
 
     logger.info("💰→🏠 Price inquiry ended, returning to router")
 

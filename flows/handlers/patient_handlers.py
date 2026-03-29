@@ -37,12 +37,17 @@ async def collect_address_and_transition(args: FlowArgs, flow_manager: FlowManag
 
 
 async def recollect_address_and_transition(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
-    """Re-collect address after invalid address error, skip gender/dob/verify and go straight to silent search"""
+    """Re-collect address after invalid address error, skip gender/dob/verify and go straight to search"""
     address = args.get("address", "").strip()
 
     if address:
         flow_manager.state["patient_address"] = address
         logger.info(f"📍 Address re-collected: {address}")
+
+        # Price inquiry → skip orange box, go to final center search
+        if flow_manager.state.get("intent") == "price_inquiry":
+            from flows.nodes.booking import create_final_center_search_node
+            return {"success": True, "address": address}, create_final_center_search_node()
 
         from flows.nodes.patient_info import create_silent_center_search_and_flow_node
         return {"success": True, "address": address}, create_silent_center_search_and_flow_node()

@@ -37,8 +37,9 @@ async def handle_visit_type_selection(
         flow_manager.state["transfer_requested"] = True
         flow_manager.state["transfer_type"] = "capability_limitation"
 
+        import asyncio
         from flows.handlers.global_handlers import _handle_transfer_escalation
-        await _handle_transfer_escalation(flow_manager)
+        asyncio.create_task(_handle_transfer_escalation(flow_manager))
 
         from flows.nodes.transfer import create_transfer_node
         return {

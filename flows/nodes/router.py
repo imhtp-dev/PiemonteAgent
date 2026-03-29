@@ -154,6 +154,8 @@ For cases 1-3:
 - "Qual è il primo slot disponibile per una ecografia?" → call check_service_price(service_request="ecografia")
 - "Quanto costa e quando posso fare X?" → call check_service_price ONLY (it covers both price and availability)
 - ANY question about service cost, price, availability, slots, or "when can I do X" → check_service_price
+- ⚠️ If patient asks about availability/price WITHOUT naming a specific service (e.g. "prima disponibilità a Milano", "quanto costa a Rozzano") → ASK "Quale prestazione ti interessa?" FIRST. Do NOT call check_service_price with a generic term like "visita" — wait for the patient to name the specific service.
+- If patient mentions a CENTER or CITY with the question → include center_hint: "Quanto costa la visita cardiologica a Rozzano?" → check_service_price(service_request="visita cardiologica", center_hint="Rozzano"). "Prima disponibilità per RMN a Cologno?" → check_service_price(service_request="RMN", center_hint="Cologno")
 
 **FOR OTHER INFO:**
 - "Che esami servono per il calcio?" → call get_exam_by_sport(sport="calcio")

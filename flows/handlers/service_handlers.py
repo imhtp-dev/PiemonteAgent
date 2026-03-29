@@ -94,6 +94,23 @@ async def search_health_services_and_transition(args: FlowArgs, flow_manager: Fl
                 if exact_match not in flow_manager.state["selected_services"]:
                     flow_manager.state["selected_services"].append(exact_match)
 
+                # If center_hint exists in price_inquiry, skip address node entirely
+                center_hint = flow_manager.state.get("center_hint")
+                if center_hint and flow_manager.state.get("intent") == "price_inquiry":
+                    logger.info(f"📍 Center hint '{center_hint}' — skipping address node")
+                    flow_manager.state["patient_address"] = center_hint
+                    flow_manager.state["patient_gender"] = "m"
+                    flow_manager.state["patient_dob"] = "1980-01-01"
+                    from flows.nodes.booking import create_final_center_search_node
+                    return {
+                        "success": True,
+                        "auto_selected": True,
+                        "service_name": exact_match.name,
+                        "service_uuid": exact_match.uuid,
+                        "center_hint": center_hint,
+                        "message": f"Found exact match: {exact_match.name}"
+                    }, create_final_center_search_node()
+
                 from flows.nodes.patient_info import create_collect_address_node
                 return {
                     "success": True,
@@ -168,10 +185,25 @@ async def select_service_and_transition(args: FlowArgs, flow_manager: FlowManage
         flow_manager.state["selected_services"].append(selected_service)
     
     logger.info(f"🎯 Service selected: {selected_service.name}")
-    
+
+    # If center_hint exists in price_inquiry, skip address node entirely
+    center_hint = flow_manager.state.get("center_hint")
+    if center_hint and flow_manager.state.get("intent") == "price_inquiry":
+        logger.info(f"📍 Center hint '{center_hint}' — skipping address node")
+        flow_manager.state["patient_address"] = center_hint
+        flow_manager.state["patient_gender"] = "m"
+        flow_manager.state["patient_dob"] = "1980-01-01"
+        from flows.nodes.booking import create_final_center_search_node
+        return {
+            "success": True,
+            "service_name": selected_service.name,
+            "service_uuid": selected_service.uuid,
+            "center_hint": center_hint
+        }, create_final_center_search_node()
+
     from flows.nodes.patient_info import create_collect_address_node
     return {
-        "success": True, 
+        "success": True,
         "service_name": selected_service.name,
         "service_uuid": selected_service.uuid
     }, create_collect_address_node()
@@ -219,7 +251,23 @@ async def refine_search_and_transition(args: FlowArgs, flow_manager: FlowManager
             if exact_match not in flow_manager.state["selected_services"]:
                 flow_manager.state["selected_services"].append(exact_match)
 
-            # Transition directly to address collection
+            # If center_hint exists in price_inquiry, skip address node
+            center_hint = flow_manager.state.get("center_hint")
+            if center_hint and flow_manager.state.get("intent") == "price_inquiry":
+                logger.info(f"📍 Center hint '{center_hint}' — skipping address node")
+                flow_manager.state["patient_address"] = center_hint
+                flow_manager.state["patient_gender"] = "m"
+                flow_manager.state["patient_dob"] = "1980-01-01"
+                from flows.nodes.booking import create_final_center_search_node
+                return {
+                    "success": True,
+                    "auto_selected": True,
+                    "service_name": exact_match.name,
+                    "service_uuid": exact_match.uuid,
+                    "center_hint": center_hint,
+                    "message": f"Found exact match: {exact_match.name}"
+                }, create_final_center_search_node()
+
             from flows.nodes.patient_info import create_collect_address_node
             return {
                 "success": True,

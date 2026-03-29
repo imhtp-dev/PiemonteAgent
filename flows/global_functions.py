@@ -173,6 +173,10 @@ GLOBAL_FUNCTIONS = [
             "service_request": {
                 "type": "string",
                 "description": "The health service to check price for"
+            },
+            "center_hint": {
+                "type": "string",
+                "description": "City or center name if patient mentioned one (e.g. 'Rozzano', 'Rozzano Viale Toscana'). Only include if patient explicitly named a location."
             }
         },
         required=["service_request"],

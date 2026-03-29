@@ -309,6 +309,7 @@ When user responds yes/no, call expand_search_radius with expand=true or expand=
 
 def create_no_centers_node(address: str, service_name: str) -> NodeConfig:
     """Dynamically create node when no centers are found"""
+    from flows.handlers.service_handlers import search_health_services_and_transition
     return NodeConfig(
         name="no_centers_found",
         role_messages=[{
@@ -322,7 +323,7 @@ def create_no_centers_node(address: str, service_name: str) -> NodeConfig:
         functions=[
             FlowsFunctionSchema(
                 name="search_health_services",
-                handler=lambda args, flow_manager: None,  # Import this properly in implementation
+                handler=search_health_services_and_transition,
                 description="Search for different health services",
                 properties={
                     "search_term": {

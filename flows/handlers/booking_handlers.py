@@ -20,6 +20,66 @@ from config.settings import settings
 ITALIAN_TZ = ZoneInfo("Europe/Rome")
 
 
+def _auto_select_center(center_hint: str, centers: list):
+    """Auto-select center if clear fuzzy match against center_hint.
+    Returns HealthCenter or None if ambiguous.
+    """
+    from rapidfuzz import fuzz
+
+    if len(centers) == 1:
+        logger.info(f"📍 Center auto-select: only 1 center → {centers[0].name}")
+        return centers[0]
+
+    if not center_hint:
+        return None
+
+    scores = []
+    for center in centers:
+        score = fuzz.partial_ratio(center_hint.lower(), center.name.lower())
+        scores.append((center, score))
+        logger.info(f"📍 Center score: {score} | {center.name} (hint='{center_hint}')")
+
+    scores.sort(key=lambda x: x[1], reverse=True)
+    top = scores[0]
+    second = scores[1] if len(scores) > 1 else (None, 0)
+
+    if top[1] >= 85 and (top[1] - second[1]) >= 15:
+        logger.info(f"📍 Clear winner: {top[0].name} (score={top[1]}, gap={top[1] - second[1]})")
+        return top[0]
+
+    logger.info(f"📍 Ambiguous: top={top[0].name}({top[1]}), second={second[0].name if second[0] else 'N/A'}({second[1]})")
+    return None
+
+
+async def _price_inquiry_slot_search(flow_manager, selected_center, selected_services, result):
+    """Run slot search for price inquiry after auto-selecting a center.
+    Replicates the price_inquiry path from select_center_and_book.
+    """
+    patient_gender = flow_manager.state.get("patient_gender", "m")
+    patient_dob = flow_manager.state.get("patient_dob", "")
+    current_service = selected_services[0] if selected_services else None
+
+    tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    flow_manager.state["preferred_date"] = tomorrow
+    flow_manager.state["booking_scenario"] = "legacy"
+    flow_manager.state["pending_slot_search_params"] = {
+        "selected_center": selected_center,
+        "selected_services": selected_services,
+        "preferred_date": tomorrow,
+        "start_time": None,
+        "end_time": None,
+        "time_preference": "any time",
+        "patient_gender": patient_gender,
+        "patient_dob": patient_dob,
+        "current_service_index": 0,
+        "current_service": current_service
+    }
+
+    logger.info(f"💰 Price inquiry (auto-selected center): searching slots for {tomorrow}")
+    return await perform_slot_search_and_transition({}, flow_manager)
+
+
 def get_min_booking_time() -> datetime:
     """Earliest bookable moment = now + 24h in Italian timezone."""
     return datetime.now(ITALIAN_TZ) + timedelta(hours=24)
@@ -190,6 +250,25 @@ async def search_final_centers_and_transition(args: FlowArgs, flow_manager: Flow
                 "expanded_search": flow_manager.state.get("expanded_search", False),
                 "message": message
             }
+
+            # Log all returned centers
+            for i, c in enumerate(health_centers):
+                logger.info(f"📍 Center {i+1}/{len(health_centers)}: {c.name} | city={c.city}")
+
+            # Auto-select center if clear fuzzy match (all flows)
+            center_hint = flow_manager.state.get("center_hint") or address
+            if center_hint:
+                auto_center = _auto_select_center(center_hint, health_centers[:3])
+                if auto_center:
+                    logger.info(f"📍 Auto-selected center: {auto_center.name} (hint='{center_hint}')")
+                    flow_manager.state["selected_center"] = auto_center
+                    result["auto_selected_center"] = auto_center.name
+
+                    if flow_manager.state.get("intent") == "price_inquiry":
+                        return await _price_inquiry_slot_search(flow_manager, auto_center, selected_services, result)
+                    else:
+                        # Normal booking / doctor flow — run select_center_and_book logic
+                        return await select_center_and_book({"center_uuid": auto_center.uuid}, flow_manager)
 
             from flows.nodes.booking import create_final_center_selection_node
             return result, create_final_center_selection_node(
@@ -2428,17 +2507,6 @@ async def search_different_date_handler(args: FlowArgs, flow_manager: FlowManage
             "success": False,
             "message": "An error occurred while searching for slots"
         }, None
-
-
-async def no_slots_transfer_handler(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:
-    """Transfer patient to operator when no slots are available."""
-    logger.info("📞 No slots available — patient requested operator transfer")
-    flow_manager.state["transfer_reason"] = "no_slots_available"
-    from flows.nodes.transfer import create_transfer_node_with_escalation
-    return {
-        "success": True,
-        "message": "Transferring to operator due to no slot availability"
-    }, await create_transfer_node_with_escalation(flow_manager)
 
 
 async def skip_current_service_handler(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:

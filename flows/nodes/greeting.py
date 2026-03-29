@@ -7,13 +7,14 @@ from flows.handlers.service_handlers import search_health_services_and_transitio
 from config.settings import settings
 
 
-def create_greeting_node(initial_booking_request: str = None, additional_service_request: str = None, intent: str = None) -> NodeConfig:
+def create_greeting_node(initial_booking_request: str = None, additional_service_request: str = None, intent: str = None, center_hint: str = None) -> NodeConfig:
     """Create the initial greeting node with automatic search trigger if coming from info agent
 
     Args:
         initial_booking_request: If provided, LLM will immediately search for this service
         additional_service_request: If provided, second service the patient also wants to book
         intent: "price_inquiry" or None — controls the acknowledge message
+        center_hint: If provided, patient already named a center/city — skip "alcune informazioni" message
     """
 
     # Build task message based on whether we have a pre-filled request
@@ -28,12 +29,20 @@ def create_greeting_node(initial_booking_request: str = None, additional_service
                 f'Do NOT ask the user what they want - they already told you. {settings.language_config}'
             )
         elif intent == "price_inquiry":
-            acknowledge = (
-                f'The user wants to know about: "{initial_booking_request}"\n\n'
-                f'First say: "Per verificare dovrò chiederti alcune informazioni."\n'
-                f'Then IMMEDIATELY call search_health_services with search_term="{initial_booking_request}".\n'
-                f'Do NOT ask the user what they want - they already told you. {settings.language_config}'
-            )
+            if center_hint:
+                acknowledge = (
+                    f'The user wants to know about: "{initial_booking_request}" at "{center_hint}"\n\n'
+                    f'First say: "Verifico subito."\n'
+                    f'Then IMMEDIATELY call search_health_services with search_term="{initial_booking_request}".\n'
+                    f'Do NOT ask the user what they want - they already told you. {settings.language_config}'
+                )
+            else:
+                acknowledge = (
+                    f'The user wants to know about: "{initial_booking_request}"\n\n'
+                    f'First say: "Per verificare dovrò chiederti alcune informazioni."\n'
+                    f'Then IMMEDIATELY call search_health_services with search_term="{initial_booking_request}".\n'
+                    f'Do NOT ask the user what they want - they already told you. {settings.language_config}'
+                )
         else:
             acknowledge = (
                 f'The user has already requested to book: "{initial_booking_request}"\n\n'
