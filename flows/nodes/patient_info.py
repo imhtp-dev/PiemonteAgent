@@ -24,7 +24,7 @@ def create_collect_address_node() -> NodeConfig:
         }],
         task_messages=[{
             "role": "system",
-            "content": "Perfect! Now I need your address or city to find nearby health centers. Please tell me your address."
+            "content": "Ask: 'Dove vuoi effettuare la visita?' — accept a center name (e.g. 'Rozzano', 'Torino Crocetta') or a city/address."
         }],
         functions=[
             FlowsFunctionSchema(

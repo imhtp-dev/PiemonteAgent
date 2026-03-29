@@ -395,7 +395,9 @@ async def global_clinic_info(
 # ============================================================================
 
 # Services that cannot be booked/priced via this agent — used as safety net
-# in start_booking and check_service_price handlers
+# in start_booking and check_service_price handlers.
+# Sports medicine keywords kept as safety net: if LLM misroutes to start_booking,
+# this catches it and escalates. Primary routing is via start_sports_medicine_booking.
 UNBOOKABLE_SERVICE_KEYWORDS = [
     "medicina sportiva",
     "medicina dello sport",
@@ -494,7 +496,7 @@ async def global_request_transfer(
             "success": True,
             "pending_transfer": True,
             "reason": reason,
-            "message": "Dimmi di cosa hai bisogno. Se non riesco ad aiutarti, ti trasferirò a un operatore umano."
+            "message": "Prima di trasferire la chiamata, prova a farmi la tua domanda. Posso aiutarti con informazioni su prestazioni, prezzi, disponibilità e orari dei nostri centri. Se non riesco a rispondere, ti passo subito a un operatore."
         }, None  # Stay at current node
 
     except Exception as e:
@@ -696,6 +698,62 @@ async def global_start_booking(
             "success": False,
             "error": str(e)
         }, None  # Stay at current node on error
+
+
+# ============================================================================
+# 9b. START SPORTS MEDICINE BOOKING (Global)
+# ============================================================================
+
+async def global_start_sports_medicine_booking(
+    args: FlowArgs,
+    flow_manager: FlowManager
+) -> Tuple[Dict[str, Any], NodeConfig]:
+    """
+    Start sports medicine booking flow.
+    Routes to type selection node (agonistic vs non-agonistic).
+    LLM may pre-detect the type from patient utterance.
+    """
+    try:
+        visit_type = (args.get("visit_type") or "").strip().lower()
+
+        logger.info(f"🏅 [GLOBAL] Start Sports Medicine Booking: type={visit_type or 'unknown'}")
+
+        # Sports medicine flow disabled — escalate to operator for now
+        # TODO: Remove this block when ready to enable non-agonistic flow
+        if not settings.sports_medicine_enabled:
+            logger.info("🚫 Sports medicine flow disabled — escalating to operator")
+            flow_manager.state["transfer_reason"] = f"Prenotazione medicina sportiva: {visit_type}"
+            flow_manager.state["transfer_requested"] = True
+            flow_manager.state["transfer_type"] = "capability_limitation"
+            await _handle_transfer_escalation(flow_manager)
+            from flows.nodes.transfer import create_transfer_node
+            return {
+                "success": True,
+                "message": "La prenotazione per visite di medicina sportiva non è disponibile tramite questo servizio. Ti trasferisco a un operatore."
+            }, create_transfer_node()
+
+        # Map LLM-detected type
+        pre_detected = None
+        if visit_type in ("non_agonistic", "non_agonistica", "non agonistica"):
+            pre_detected = "non_agonistic"
+        elif visit_type in ("agonistic", "agonistica"):
+            pre_detected = "agonistic"
+
+        flow_manager.state["sports_medicine_mode"] = True
+        flow_manager.state["booking_in_progress"] = True
+
+        from flows.nodes.sports_medicine import create_sports_medicine_type_node
+        return {
+            "success": True,
+            "visit_type": visit_type or "unknown"
+        }, create_sports_medicine_type_node(pre_detected_type=pre_detected)
+
+    except Exception as e:
+        logger.error(f"❌ Start sports medicine booking error: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }, None
 
 
 async def global_cancel_and_restart(

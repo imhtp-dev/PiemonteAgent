@@ -44,7 +44,7 @@ def create_greeting_node(initial_booking_request: str = None, additional_service
             )
         task_content = acknowledge
     else:
-        task_content = f"""Say: 'Sono Voilà, l\'assistente virtuale di Serba Healthcare. Posso fornirti informazioni su tutte le prestazioni offerte dai nostri centri. Se desideri prenotare, posso aiutarti per le prestazioni di poliambulatorio e radiologia. Dimmi pure'
+        task_content = f"""Say: 'Sono Voilà, l\'assistente virtuale di Serba Healthcare. Posso fornirti informazioni su tutte le prestazioni offerte dai nostri centri. Dimmi pure!'
 
 When the user mentions ANY service name, immediately call search_health_services to search for it. {settings.language_config}"""
 

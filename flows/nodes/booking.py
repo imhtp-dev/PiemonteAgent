@@ -1184,8 +1184,6 @@ def create_no_slots_node(date: str, time_preference: str = "any time", first_app
         booked_slots_info: Human-readable summary of already-booked services
         service_name: Name of the service being searched (to avoid LLM confusion in multi-service flows)
     """
-    from flows.handlers.booking_handlers import no_slots_transfer_handler
-
     # Build constraint message for multi-service bookings
     system_constraint_msg = ""
     if first_appointment_date:
@@ -1204,24 +1202,16 @@ def create_no_slots_node(date: str, time_preference: str = "any time", first_app
     if has_booked_slots:
         skip_instruction = " If the user says they want to skip this service and proceed with only the already-booked services, call the skip_current_service function."
 
-    # Primary message: no availability, offer operator transfer
+    # Primary message: no availability, offer alternative date or other info
     service_label = service_name or "la prestazione selezionata"
-    no_slots_message = f"Attualmente non risultano disponibilità per {service_label}. Se vuoi, posso metterti in contatto con un operatore, oppure possiamo provare a cercare una data diversa."
+    no_slots_message = f"Attualmente non ci sono disponibilità per {service_label}. Possiamo provare a cercare una data diversa, oppure hai bisogno di altre informazioni?"
 
     functions = [
-        # Primary: transfer to operator
-        FlowsFunctionSchema(
-            name="transfer_to_operator",
-            handler=no_slots_transfer_handler,
-            description="Transfer the patient to a human operator. Use when the patient confirms they want to speak with an operator.",
-            properties={},
-            required=[]
-        ),
-        # Secondary: try a different date
+        # Primary: try a different date
         FlowsFunctionSchema(
             name="collect_datetime",
             handler=collect_datetime_and_transition,
-            description="Collect new preferred date and optional time preference. Use when the patient declines the operator transfer and wants to try a different date.",
+            description="Collect new preferred date and optional time preference. Use when the patient wants to try a different date.",
             properties={
                 "preferred_date": {
                     "type": "string",
@@ -1258,11 +1248,9 @@ def create_no_slots_node(date: str, time_preference: str = "any time", first_app
             "role": "system",
             "content": f"""{system_constraint_msg}{booked_context}We are in {settings.current_year}.{service_context}
 
-Tell the patient there is no availability for the selected service. Offer to transfer them to a human operator. If they decline the transfer, offer to try a different date.{skip_instruction}
+Tell the patient there is no availability for the selected service. Offer to try a different date. Do NOT offer or mention transfer to an operator.{skip_instruction}
 
-IMPORTANT: Say the message naturally in Italian. Do NOT mention technical details or UUIDs. Do NOT say the booking is confirmed.
-
-🔇 SILENT FUNCTION CALLS: When calling transfer_to_operator, call it IMMEDIATELY with NO preceding text. {settings.language_config}"""
+IMPORTANT: Say the message naturally in Italian. Do NOT mention technical details or UUIDs. Do NOT say the booking is confirmed. {settings.language_config}"""
         }],
         task_messages=[{
             "role": "system",

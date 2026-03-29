@@ -240,6 +240,37 @@ async def initialize_flow_manager(flow_manager: TrackedFlowManager, start_node: 
 
         # Initialize at Cerba Card question
         await flow_manager.initialize(create_cerba_membership_node())
+    elif start_node == "sports_medicine":
+        from flows.nodes.sports_medicine import create_sports_medicine_type_node
+
+        flow_manager.state.update({
+            "sports_medicine_mode": True,
+            "booking_in_progress": True,
+        })
+
+        print("🏅 SPORTS MEDICINE TEST MODE")
+        print("=" * 50)
+        print("   Starting from: Visit type selection (agonistic vs non-agonistic)")
+        print("=" * 50)
+
+        await flow_manager.initialize(create_sports_medicine_type_node())
+    elif start_node == "sports_medicine_address":
+        from flows.nodes.sports_medicine import create_sports_medicine_address_node
+
+        flow_manager.state.update({
+            "sports_medicine_mode": True,
+            "booking_in_progress": True,
+            "is_agonistic": False,
+            "is_b1_protocol": False,
+        })
+
+        print("🏅 SPORTS MEDICINE ADDRESS TEST MODE")
+        print("=" * 50)
+        print("   Protocol: Standard Non-Agonistica")
+        print("   Starting from: Address collection")
+        print("=" * 50)
+
+        await flow_manager.initialize(create_sports_medicine_address_node())
     elif start_node == "orange_box":
         from flows.nodes.patient_info import create_silent_center_search_and_flow_node
         from models.requests import HealthService

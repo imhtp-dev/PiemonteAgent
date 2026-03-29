@@ -22,7 +22,7 @@ from utils.tracing import trace_api_call
 VALID_ESITO_CHIAMATA = ["COMPLETATA", "TRASFERITA", "NON COMPLETATA"]
 
 VALID_MOTIVAZIONE = {
-    "COMPLETATA": ["Info fornite", "Pren. effettuata"],
+    "COMPLETATA": ["Info fornite", "Info pren. Fornite", "Pren. effettuata"],
     "TRASFERITA": ["Mancata comprensione", "Argomento sconosciuto", "Richiesta paziente", "Prenotazione"],
     "NON COMPLETATA": ["Interrotta dal paziente", "Fuori orario", "Problema Tecnico"]
 }
@@ -456,7 +456,8 @@ Analyze the transcript and classify the call.
 ### ESITO_CHIAMATA + MOTIVAZIONE (STRICT - use ONLY these combinations):
 
 **COMPLETATA** (call completed successfully):
-- "Info fornite" → L'AI ha risposto con successo alla richiesta del paziente (info/domande)
+- "Info fornite" → L'AI ha risposto con successo alla richiesta del paziente (info/domande generali)
+- "Info pren. Fornite" → L'AI ha fornito info su prestazioni usando il booking agent (prezzo, disponibilità, sede) senza completare una prenotazione
 - "Pren. effettuata" → L'AI ha completato una prenotazione per il paziente (booking confermato)
 
 **TRASFERITA** (call transferred to human operator):
@@ -490,7 +491,7 @@ Analyze the transcript and classify the call.
   Note: Our agent handles 1|2|2 and 1|3|2. For fondi/assicurazioni use 1|2|1 (poli) — these get routed to human operators.
   If unsure, use the original IVR path: {ivr_path}
 - PATIENT_INTENT: Brief description (max 100 chars)
-- SUMMARY: Max 250 characters
+- SUMMARY: Max 250 characters. If the conversation mentions a specific prestazione, sede, medico, prima disponibilità, or prezzo, include these details in the summary.
 
 ## OUTPUT FORMAT (JSON only, no explanations):
 {{"summary": "...", "action": "...", "sentiment": "...", "queue_code": "<exact code from list above>", "esito_chiamata": "COMPLETATA|TRASFERITA|NON COMPLETATA", "motivazione": "...", "patient_intent": "..."}}
@@ -956,6 +957,11 @@ TRANSCRIPT:
                 esito_chiamata = "COMPLETATA"
                 motivazione = "Pren. effettuata"
                 logger.info(f"📅 Booking completed - overriding: esito=COMPLETATA, motivazione=Pren. effettuata")
+
+            # ✅ Override motivazione when booking APIs provided info but no booking completed
+            if call_type == "booking_incomplete" and esito_chiamata == "COMPLETATA":
+                motivazione = "Info pren. Fornite"
+                logger.info(f"📋 Booking info provided - overriding: motivazione=Info pren. Fornite")
 
             # ✅ Calculate cost based on call type (different rates for booking vs info)
             cost = self._calculate_cost(duration_seconds, call_type)

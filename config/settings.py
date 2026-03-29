@@ -242,6 +242,28 @@ class Settings:
             "timeout": 15.0  # 15 second timeout for reliability
         }
 
+    @property
+    def mds_api_config(self) -> Dict[str, str]:
+        """CHC MDS sports medicine API configuration (separate from Cerba ambulatory API)"""
+        return {
+            "base_url": os.getenv(
+                "MDS_API_BASE_URL",
+                "https://visitesportiveur.cerbahealthcare.it/api/endpoint"
+            ),
+            "username": os.getenv("MDS_API_USERNAME", ""),
+            "password": os.getenv("MDS_API_PASSWORD", ""),
+        }
+
+    @property
+    def google_maps_api_key(self) -> str:
+        """Google Maps API key for geocoding service"""
+        return os.getenv("GOOGLE_MAPS_API_KEY", "")
+
+    @property
+    def sports_medicine_enabled(self) -> bool:
+        """Whether sports medicine non-agonistic flow is enabled. When False, escalates to operator."""
+        return os.getenv("SPORTS_MEDICINE_ENABLED", "false").lower() == "true"
+
     def _validate_required_keys(self) -> None:
         """Validate that all required API keys are present"""
         required_keys = [

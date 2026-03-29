@@ -37,6 +37,7 @@ from flows.handlers.global_handlers import (
     global_request_transfer,
     global_check_service_price,
     global_start_booking,
+    global_start_sports_medicine_booking,
     global_cancel_previous_appointment,
     global_cancel_and_restart,
 )
@@ -149,7 +150,7 @@ GLOBAL_FUNCTIONS = [
     # 7. Request Transfer
     FlowsFunctionSchema(
         name="request_transfer",
-        description="Transfer to human operator. Set immediate=true for capability limitations: sports medicine, laboratorio, fondi/assicurazioni bookings, diagnostica con fondi. For generic 'transfer me' requests, set immediate=false — agent will try to help first.",
+        description="Transfer to human operator. Set immediate=true for capability limitations: laboratorio, fondi/assicurazioni bookings, diagnostica con fondi. For generic 'transfer me' requests, set immediate=false — agent will try to help first. Do NOT use for sports medicine — use start_sports_medicine_booking instead.",
         properties={
             "reason": {
                 "type": "string",
@@ -157,7 +158,7 @@ GLOBAL_FUNCTIONS = [
             },
             "immediate": {
                 "type": "boolean",
-                "description": "true = agent cannot help (sports medicine, lab, fondi/assicurazioni) → transfer now. false = patient just wants operator → try to help first."
+                "description": "true = agent cannot help (lab, fondi/assicurazioni) → transfer now. false = patient just wants operator → try to help first."
             }
         },
         required=["reason", "immediate"],
@@ -205,7 +206,22 @@ GLOBAL_FUNCTIONS = [
         handler=global_start_booking,
     ),
 
-    # 10. Cancel/Reschedule Previous Appointment (TRANSITIONS → TRANSFER)
+    # 10. Start Sports Medicine Booking (TRANSITIONS)
+    FlowsFunctionSchema(
+        name="start_sports_medicine_booking",
+        description="Start sports medicine (medicina sportiva) booking flow. Use when patient wants: visita sportiva, certificato sportivo, idoneità sportiva, visita agonistica, visita non agonistica, medicina dello sport. If the patient already specified agonistic or non-agonistic, pass it in visit_type.",
+        properties={
+            "visit_type": {
+                "type": "string",
+                "enum": ["agonistic", "non_agonistic", "unknown"],
+                "description": "agonistic = competitive sports, non_agonistic = recreational. unknown = patient didn't specify."
+            }
+        },
+        required=["visit_type"],
+        handler=global_start_sports_medicine_booking,
+    ),
+
+    # 11. Cancel/Reschedule Previous Appointment (TRANSITIONS → TRANSFER)
     FlowsFunctionSchema(
         name="cancel_previous_appointment",
         description="Transfer to operator for cancelling or rescheduling a PREVIOUSLY booked appointment. Use when patient says: 'voglio disdire un appuntamento', 'spostare una visita prenotata', 'annullare un appuntamento che ho già', 'disdetta'. Do NOT use for cancelling the current booking flow - use cancel_and_restart for that.",
@@ -219,7 +235,7 @@ GLOBAL_FUNCTIONS = [
         handler=global_cancel_previous_appointment,
     ),
 
-    # 11. Cancel Booking and Restart (TRANSITIONS)
+    # 12. Cancel Booking and Restart (TRANSITIONS)
     FlowsFunctionSchema(
         name="cancel_and_restart",
         description="Cancel current booking COMPLETELY and go back to main menu. ONLY use when patient EXPLICITLY wants to cancel/abort the entire booking or start a completely different booking from scratch. Examples: 'annulla tutto', 'non voglio più prenotare', 'ricominciamo da capo', 'voglio prenotare qualcos'altro'. Do NOT use when patient wants to change date/time/slot — that is NOT a cancellation. Do NOT use when patient says 'no' to a question or declines an option. Deletes ALL reserved slots and clears ALL booking state.",
