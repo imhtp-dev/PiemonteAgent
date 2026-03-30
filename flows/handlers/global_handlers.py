@@ -525,8 +525,9 @@ async def global_check_service_price(
     try:
         service_request = args.get("service_request", "").strip()
         center_hint = (args.get("center_hint") or "").strip()
+        doctor_name = (args.get("doctor_name") or "").strip()
 
-        logger.info(f"💰 [GLOBAL] Check Service Price: {service_request}" + (f" | center_hint={center_hint}" if center_hint else ""))
+        logger.info(f"💰 [GLOBAL] Check Service Price: {service_request}" + (f" | center_hint={center_hint}" if center_hint else "") + (f" | doctor={doctor_name}" if doctor_name else ""))
 
         # CHECK: Sports medicine services cannot be priced via this agent
         if _is_unbookable_service(service_request):
@@ -553,6 +554,8 @@ async def global_check_service_price(
         flow_manager.state["current_agent"] = "booking"
         if center_hint:
             flow_manager.state["center_hint"] = center_hint
+        if doctor_name:
+            flow_manager.state["price_inquiry_doctor"] = doctor_name
 
         # Track for analytics
         session_id = flow_manager.state.get("session_id")
@@ -823,8 +826,8 @@ async def global_cancel_and_restart(
             "current_search_radius", "intent",
             "auto_date", "auto_start_time",
             "llm_interpretation_reasoning", "llm_interpretation_summary",
-            # Center hint
-            "center_hint",
+            # Center hint + price inquiry doctor
+            "center_hint", "price_inquiry_doctor",
             # Doctor-specific booking
             "doctor_booking_mode", "requested_doctor_name",
             "selected_providing_entity", "providing_entity_uuid",

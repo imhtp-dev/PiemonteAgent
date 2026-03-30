@@ -168,7 +168,7 @@ GLOBAL_FUNCTIONS = [
     # 8. Check Service Price (TRANSITIONS)
     FlowsFunctionSchema(
         name="check_service_price",
-        description="Check price of a health service. Use when patient asks about cost/price: 'Quanto costa...', 'Qual è il prezzo...', 'Che prezzo ha...'",
+        description="Check price/availability of a health service, optionally with a specific doctor. Use for: 'Quanto costa...', 'Qual è il prezzo...', 'Prima disponibilità...', 'Prima disponibilità con il Dottor X...'",
         properties={
             "service_request": {
                 "type": "string",
@@ -177,6 +177,10 @@ GLOBAL_FUNCTIONS = [
             "center_hint": {
                 "type": "string",
                 "description": "City or center name if patient mentioned one (e.g. 'Rozzano', 'Rozzano Viale Toscana'). Only include if patient explicitly named a location."
+            },
+            "doctor_name": {
+                "type": "string",
+                "description": "Doctor's surname if patient asks about a specific doctor's availability/price. Strip titles (Dottor/Dottoressa/Dr)."
             }
         },
         required=["service_request"],

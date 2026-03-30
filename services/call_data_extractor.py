@@ -695,7 +695,13 @@ TRANSCRIPT:
             # Generate transcript text
             transcript_text = self._generate_transcript_text()
 
-            # Run LLM analysis (same as post-call)
+            # Append transfer context so LLM knows this is a transfer call
+            transfer_reason = flow_state.get("transfer_reason", "")
+            transfer_type = flow_state.get("transfer_type", "")
+            if transcript_text:
+                transcript_text += f"\n\n[SISTEMA: La chiamata è stata trasferita a un operatore. Motivo: {transfer_reason}. Tipo: {transfer_type}]"
+
+            # Run LLM analysis with transfer context
             if transcript_text:
                 analysis = await self._analyze_call_with_llm(transcript_text, flow_state)
             else:

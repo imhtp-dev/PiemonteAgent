@@ -1,3 +1,4 @@
+import json
 import requests
 import os
 from datetime import datetime, timezone
@@ -82,14 +83,25 @@ def list_slot(health_center_uuid, date_search, uuid_exam, gender='m', date_of_bi
 
         slot_count = len(slots) if isinstance(slots, list) else 0
         logger.info(f'🔍 SLOT API: {slot_count} slots returned')
+        logger.info(f'🔍 SLOT API RAW RESPONSE: {json.dumps(slots, default=str)}')
 
-        # Log first 3 slots summary
+        # Log all slots with price details
         if isinstance(slots, list):
-            for i, slot in enumerate(slots[:3]):
+            for i, slot in enumerate(slots):
                 hs = slot.get("health_services", [])
+                start_time = slot.get("start_time", "N/A")
+                pe = slot.get("providing_entity") or {}
+                pe_type = (pe.get("providing_entity_type") or {}).get("name", "")
+                prof = pe.get("professional") or {}
+                if prof:
+                    doctor = f"{prof.get('name', '')} {prof.get('surname', '')}".strip()
+                else:
+                    doctor = pe.get("name", "") or f"[{pe_type}]"
                 if hs:
                     s = hs[0]
-                    logger.debug(f'  Slot {i+1}: {s.get("name", "N/A")} | {s.get("price", "N/A")}€ | Cerba: {s.get("cerba_card_price", "N/A")}€')
+                    cerba_raw = s.get("cerba_card_price")
+                    cerba_str = f"{cerba_raw}€" if cerba_raw is not None else "NULL"
+                    logger.info(f'  Slot {i+1}/{slot_count}: {start_time} | {s.get("name", "N/A")} | {s.get("price", "N/A")}€ | Cerba: {cerba_str} | Doctor: {doctor}')
 
         return slots
     else:

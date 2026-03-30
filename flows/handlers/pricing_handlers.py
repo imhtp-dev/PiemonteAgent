@@ -71,7 +71,7 @@ async def handle_end_price_inquiry(args: FlowArgs, flow_manager: FlowManager) ->
         "intent", "booking_in_progress", "initial_booking_request", "current_agent",
         "selected_center", "available_slots", "pending_slot_search_params",
         "selected_services", "services_found", "current_search_term",
-        "center_hint", "patient_address", "patient_gender", "patient_dob",
+        "center_hint", "price_inquiry_doctor", "patient_address", "patient_gender", "patient_dob",
         "final_health_centers", "pending_center_search_params",
         "booking_scenario", "preferred_date", "preferred_time",
         "address_retry_count", "current_search_radius", "search_radius_used", "expanded_search",

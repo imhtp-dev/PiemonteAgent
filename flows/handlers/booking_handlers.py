@@ -54,12 +54,75 @@ def _auto_select_center(center_hint: str, centers: list):
 async def _price_inquiry_slot_search(flow_manager, selected_center, selected_services, result):
     """Run slot search for price inquiry after auto-selecting a center.
     Replicates the price_inquiry path from select_center_and_book.
+    Supports optional doctor filtering via state["price_inquiry_doctor"].
     """
+    import asyncio
+
     patient_gender = flow_manager.state.get("patient_gender", "m")
     patient_dob = flow_manager.state.get("patient_dob", "")
     current_service = selected_services[0] if selected_services else None
+    doctor_name = flow_manager.state.get("price_inquiry_doctor")
 
     tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # If doctor requested, look up via providing-entity API
+    providing_entity_uuid = None
+    first_service_name = current_service.name if current_service else "il servizio"
+    if doctor_name:
+        logger.info(f"🩺 Price inquiry: looking up doctor '{doctor_name}' at {selected_center.name}")
+
+        # TTS loading message
+        tts_service = flow_manager.state.get("tts_service")
+        if tts_service:
+            await tts_service.queue_frame(TTSSpeakFrame(f"Verifico la disponibilità del Dottor {doctor_name} per {first_service_name}. Attendi un momento."))
+
+        try:
+            service_uuids = [s.uuid for s in selected_services]
+            dob_formatted = patient_dob.replace("-", "")
+            loop = asyncio.get_event_loop()
+            doctors = await loop.run_in_executor(
+                None,
+                lambda: cerba_api.get_providing_entities(
+                    health_center_uuid=selected_center.uuid,
+                    health_services=service_uuids,
+                    gender=patient_gender,
+                    date_of_birth=dob_formatted,
+                    start_date=tomorrow
+                )
+            )
+
+            logger.info(f"🩺 Providing-entity API returned {len(doctors) if doctors else 0} doctors")
+            if doctors:
+                for i, doc in enumerate(doctors, 1):
+                    prof = doc.get("professional", {})
+                    logger.info(f"🩺   Doctor {i}: {prof.get('name', '')} {prof.get('surname', '')} (UUID: {doc.get('uuid', '')[:12]})")
+
+                matches = _fuzzy_match_doctor(doctor_name, doctors)
+                logger.info(f"🩺 Fuzzy match for '{doctor_name}': {len(matches)} matches (threshold ≥80)")
+                for m in matches:
+                    prof = m.get("professional", {})
+                    logger.info(f"🩺   Match: {prof.get('name', '')} {prof.get('surname', '')} (score={m.get('score')})")
+
+                if matches:
+                    best = matches[0]
+                    prof = best.get("professional", {})
+                    doctor_full = f"{prof.get('name', '')} {prof.get('surname', '')}".strip()
+                    providing_entity_uuid = best.get("uuid")
+                    flow_manager.state["matched_doctor_name"] = doctor_full
+                    logger.info(f"🩺 ✅ Doctor matched: {doctor_full} (score={best.get('score')}, UUID={providing_entity_uuid})")
+                else:
+                    logger.info(f"🩺 ❌ Doctor '{doctor_name}' not found at {selected_center.name} — showing general availability")
+                    flow_manager.state["doctor_not_found"] = True
+            else:
+                logger.info(f"🩺 ❌ No providing entities returned for {selected_center.name} — showing general availability")
+                flow_manager.state["doctor_not_found"] = True
+        except Exception as e:
+            logger.warning(f"🩺 Doctor lookup failed (non-blocking): {e}")
+    else:
+        # No doctor — TTS loading for normal price inquiry
+        tts_service = flow_manager.state.get("tts_service")
+        if tts_service:
+            await tts_service.queue_frame(TTSSpeakFrame(f"Sto verificando il prezzo per {first_service_name}. Attendi un momento."))
 
     flow_manager.state["preferred_date"] = tomorrow
     flow_manager.state["booking_scenario"] = "legacy"
@@ -76,7 +139,12 @@ async def _price_inquiry_slot_search(flow_manager, selected_center, selected_ser
         "current_service": current_service
     }
 
-    logger.info(f"💰 Price inquiry (auto-selected center): searching slots for {tomorrow}")
+    # Add doctor filter to slot search if matched
+    if providing_entity_uuid:
+        flow_manager.state["pending_slot_search_params"]["providing_entity"] = providing_entity_uuid
+        flow_manager.state["providing_entity_uuid"] = providing_entity_uuid
+
+    logger.info(f"💰 Price inquiry (auto-selected center): searching slots for {tomorrow}" + (f" with doctor filter {providing_entity_uuid}" if providing_entity_uuid else ""))
     return await perform_slot_search_and_transition({}, flow_manager)
 
 
@@ -386,36 +454,8 @@ async def select_center_and_book(args: FlowArgs, flow_manager: FlowManager) -> T
 
     if intent == "price_inquiry":
         selected_services = flow_manager.state.get("selected_services", [])
-        patient_gender = flow_manager.state.get("patient_gender", "m")
-        patient_dob = flow_manager.state.get("patient_dob", "")
-        current_service = selected_services[0] if selected_services else None
-        first_service_name = current_service.name if current_service else "your service"
-
-        tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-
-        flow_manager.state["preferred_date"] = tomorrow
-        flow_manager.state["booking_scenario"] = "legacy"
-        flow_manager.state["pending_slot_search_params"] = {
-            "selected_center": selected_center,
-            "selected_services": selected_services,
-            "preferred_date": tomorrow,
-            "start_time": None,
-            "end_time": None,
-            "time_preference": "any time",
-            "patient_gender": patient_gender,
-            "patient_dob": patient_dob,
-            "current_service_index": 0,
-            "current_service": current_service
-        }
-
-        tts_message = f"Sto verificando il prezzo per {first_service_name}. Attendi un momento."
-
-        logger.info(f"💰 Price inquiry: skipping sorting API + datetime, auto-searching slots for {tomorrow}")
-
-        tts_service = flow_manager.state.get("tts_service")
-        if tts_service:
-            await tts_service.queue_frame(TTSSpeakFrame(tts_message))
-        return await perform_slot_search_and_transition(args, flow_manager)
+        logger.info(f"💰 Price inquiry: routing to _price_inquiry_slot_search")
+        return await _price_inquiry_slot_search(flow_manager, selected_center, selected_services, {"success": True})
 
     # ============================================================================
     # SORTING API INTEGRATION
@@ -1462,7 +1502,10 @@ async def perform_slot_search_and_transition(args: FlowArgs, flow_manager: FlowM
                 }, create_price_info_node(
                     slots=slots_response,
                     service_name=current_service_name,
-                    center_name=selected_center.name
+                    center_name=selected_center.name,
+                    doctor_name=flow_manager.state.get("matched_doctor_name"),
+                    doctor_not_found=flow_manager.state.get("doctor_not_found", False),
+                    requested_doctor=flow_manager.state.get("price_inquiry_doctor")
                 )
 
             from flows.nodes.booking import create_slot_selection_node

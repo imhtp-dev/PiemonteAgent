@@ -54,6 +54,7 @@ class Settings:
                 # Brand / Locations
                 "Cerba Healthcare", "Leini",
                 # Common medical services
+                "RX", "RX torace", "RX gamba", "RX colonna",
                 "ecografia", "radiografia", "risonanza magnetica", "TAC",
                 "elettrocardiogramma", "ECG", "emocromo", "analisi del sangue",
                 "visita specialistica", "visita cardiologica", "visita ortopedica",
@@ -91,7 +92,8 @@ class Settings:
     def _load_phrase_list(self):
         """Load base phrases + doctor names from data/doctor_names.json"""
         base_phrases = [
-            "maschio", "femmina", "cerba healthcare", "RX Cavigilia Destra",
+            "maschio", "femmina", "cerba healthcare",
+            "RX", "RX torace", "RX gamba", "RX colonna", "RX Caviglia Destra",
             # Booking confirmation/action keywords — prevent STT misrecognition
             "procediamo", "confermo", "conferma", "annulla", "annullare",
             "cambiare", "modificare", "va bene", "sì", "no",
