@@ -189,7 +189,7 @@ async def search_final_centers_and_transition(args: FlowArgs, flow_manager: Flow
     Radius progression (interactive, user must confirm each expansion):
     - Default: 22km (API default, no radius param)
     - First expansion: 42km (if user agrees)
-    - Second expansion: 62km (if user agrees)
+    - Max 42km — if still no centers, show "non viene erogata" (no escalation)
     """
     try:
         # Get all selected services from state
@@ -357,24 +357,30 @@ async def search_final_centers_and_transition(args: FlowArgs, flow_manager: Flow
                     "next_radius": 42
                 }, create_ask_expand_radius_node(address, services_text, current_radius=22, next_radius=42)
 
-            elif current_radius == 42:
-                logger.info(f"⚠️ No centers at 42km, asking user to expand to 62km")
-                from flows.nodes.booking import create_ask_expand_radius_node
-                return {
-                    "success": False,
-                    "message": f"No centers found within 42km of {address}",
-                    "next_radius": 62
-                }, create_ask_expand_radius_node(address, services_text, current_radius=42, next_radius=62)
-
             else:
-                logger.warning(f"⚠️ No centers found even at maximum 62km radius")
-                from flows.nodes.booking import create_no_centers_node
+                logger.warning(f"⚠️ No centers found at maximum 42km radius")
+                # Clear booking state so next flow starts fresh
+                for k in ["selected_service", "selected_services", "selected_center",
+                           "available_slots", "pending_slot_search_params", "pending_center_search_params",
+                           "initial_booking_request", "current_agent", "intent", "booking_in_progress",
+                           "center_hint", "price_inquiry_doctor", "patient_address",
+                           "patient_gender", "patient_dob", "current_search_radius",
+                           "services_found", "current_search_term", "expanded_search",
+                           "search_radius_used", "address_retry_count", "booking_scenario"]:
+                    flow_manager.state.pop(k, None)
+                from flows.nodes.router import create_router_node
                 return {
                     "success": False,
-                    "message": f"No health centers found within 62km of {address} for: {services_text}",
+                    "message": (
+                        "Mi dispiace, in quest'area non viene erogata la prestazione selezionata. "
+                        "Chiedi al paziente se ha bisogno di altre informazioni."
+                    ),
                     "centers": [],
-                    "max_radius_searched": 62
-                }, create_no_centers_node(address, services_text)
+                    "max_radius_searched": 42
+                }, create_router_node(
+                    reset_context=True,
+                    task_override="Say: 'Mi dispiace, in quest'area non viene erogata la prestazione selezionata. Hai bisogno di altre informazioni?' Then wait for the patient's response."
+                )
 
     except Exception as e:
         logger.error(f"❌ Center search error: {e}")
@@ -402,11 +408,25 @@ async def handle_radius_expansion_response(args: FlowArgs, flow_manager: FlowMan
         address = params.get("address", "your location")
         services_text = ", ".join(service_names)
 
-        from flows.nodes.booking import create_no_centers_node
+        for k in ["selected_service", "selected_services", "selected_center",
+                   "available_slots", "pending_slot_search_params", "pending_center_search_params",
+                   "initial_booking_request", "current_agent", "intent", "booking_in_progress",
+                   "center_hint", "price_inquiry_doctor", "patient_address",
+                   "patient_gender", "patient_dob", "current_search_radius",
+                   "services_found", "current_search_term", "expanded_search",
+                   "search_radius_used", "address_retry_count", "booking_scenario"]:
+            flow_manager.state.pop(k, None)
+        from flows.nodes.router import create_router_node
         return {
             "success": False,
-            "message": "User declined to expand search radius"
-        }, create_no_centers_node(address, services_text)
+            "message": (
+                "Mi dispiace, in quest'area non viene erogata la prestazione selezionata. "
+                "Chiedi al paziente se ha bisogno di altre informazioni."
+            )
+        }, create_router_node(
+            reset_context=True,
+            task_override="Say: 'Mi dispiace, in quest'area non viene erogata la prestazione selezionata. Hai bisogno di altre informazioni?' Then wait for the patient's response."
+        )
 
 
 async def select_center_and_book(args: FlowArgs, flow_manager: FlowManager) -> Tuple[Dict[str, Any], NodeConfig]:

@@ -861,7 +861,7 @@ async def global_cancel_and_restart(
             "success": True,
             "cancelled_slots": cancelled_count,
             "message": "Booking cancelled. Returning to main menu."
-        }, create_router_node(reset_context=True, business_status=flow_manager.state.get("business_status", "open"))
+        }, create_router_node(reset_context="cancel", business_status=flow_manager.state.get("business_status", "open"))
 
     except Exception as e:
         logger.error(f"❌ Cancel and restart error: {e}")
@@ -870,7 +870,7 @@ async def global_cancel_and_restart(
             "success": False,
             "error": str(e),
             "message": "Error during cancellation, returning to main menu."
-        }, create_router_node(reset_context=True, business_status=flow_manager.state.get("business_status", "open"))
+        }, create_router_node(reset_context="cancel", business_status=flow_manager.state.get("business_status", "open"))
 
 
 # ============================================================================

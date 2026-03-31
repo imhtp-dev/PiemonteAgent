@@ -307,35 +307,6 @@ When user responds yes/no, call expand_search_radius with expand=true or expand=
     )
 
 
-def create_no_centers_node(address: str, service_name: str) -> NodeConfig:
-    """Dynamically create node when no centers are found"""
-    from flows.handlers.service_handlers import search_health_services_and_transition
-    return NodeConfig(
-        name="no_centers_found",
-        role_messages=[{
-            "role": "system",
-            "content": "Apologetically explain that no health centers were found and offer alternatives."
-        }],
-        task_messages=[{
-            "role": "system",
-            "content": f"No health center found at {address} for {service_name}. Apologize and ask if they'd like to try a different location or service. Offer to start over. {settings.language_config}"
-        }],
-        functions=[
-            FlowsFunctionSchema(
-                name="search_health_services",
-                handler=search_health_services_and_transition,
-                description="Search for different health services",
-                properties={
-                    "search_term": {
-                        "type": "string",
-                        "description": "New service name to search for"
-                    }
-                },
-                required=["search_term"]
-            )
-        ]
-    )
-
 
 def create_cerba_membership_node() -> NodeConfig:
     """Create Cerba membership check node"""

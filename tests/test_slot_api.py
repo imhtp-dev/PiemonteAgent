@@ -14,15 +14,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # ║  TWEAK THESE                                                     ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
-CENTER_UUID = "5d2cd255-15e2-458b-967f-ad91f4390aa9"   # Torino via Valperga Caluso
-SERVICE_UUIDS = ["f29c4a8c-cb38-49f6-80fa-e7a946a899f5"]  # Combined service from production log
+CENTER_UUID = "6cff89d8-1f40-4eb8-bed7-f36e94a3355c"   
+SERVICE_UUIDS = ["9a93d65f-396a-45e4-9284-94481bdd2b51"]  
 DATE = "2026-03-07"
 GENDER = "f"               # "m" or "f"
 DOB = "19990106"           # YYYYMMDD
 START_TIME = None          # e.g. "2026-03-20 08:00:00+00" or None
 END_TIME = None            # e.g. "2026-03-20 12:00:00+00" or None
 PROVIDING_ENTITY = None    # doctor UUID or None
-AVAILABILITIES_LIMIT = 3   # sent directly to API — tweak to see effect
+AVAILABILITIES_LIMIT = 2   # sent directly to API — tweak to see effect
 
 # ╔══════════════════════════════════════════════════════════════════╝
 

@@ -31,14 +31,15 @@ def _get_booking_status_prompt() -> str:
 """
 
 
-def create_router_node(reset_context: bool = False, business_status: str = "open") -> NodeConfig:
+def create_router_node(reset_context=False, business_status: str = "open", task_override: str = None) -> NodeConfig:
     """
     Create the initial router node.
     Global functions handle all info, booking, and transfer requests.
 
     Args:
-        reset_context: If True, reset LLM context (used after cancel_and_restart).
+        reset_context: False=greeting, True=silent reset, "cancel"=cancellation message.
         business_status: "open", "close", or "after_hours" — controls transfer availability in prompt.
+        task_override: If provided, use this as the task message instead of the default.
     """
 
     # Build business status prompt section
@@ -137,7 +138,11 @@ For cases 1-3:
         task_messages=[{
             "role": "system",
             "content": f"""{
+    task_override
+    if task_override else
     "The previous booking has been cancelled. Say: 'La prenotazione è stata annullata. Come posso aiutarti?'"
+    if reset_context == "cancel" else
+    "Do NOT greet or introduce yourself again. Just listen and respond to the patient's next request."
     if reset_context else
     "Greet the caller: 'Sono Voilà, l'assistente virtuale di Serba Healthcare. Posso fornirti informazioni su tutte le prestazioni offerte dai nostri centri. Dimmi pure!'"
 }

@@ -16,7 +16,7 @@ from models.requests import HealthService
 FALLBACK_HC_UUID = "c5535638-6c18-444c-955d-89139d8276be"
 
 # Silent radius expansion steps (no user interaction)
-SILENT_RADIUS_STEPS = [None, 42, 62]  # None = API default 22km
+SILENT_RADIUS_STEPS = [None, 42]  # None = API default 22km, max 42km
 
 
 def prune_empty_flow_nodes(node: dict) -> dict:

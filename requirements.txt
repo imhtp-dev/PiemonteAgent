@@ -6,7 +6,7 @@
 # ============================================
 
 # Core Pipecat with all extras
-pipecat-ai[daily,openai,silero,deepgram,elevenlabs,azure,local-smart-turn-v3]==0.0.107
+pipecat-ai[daily,openai,silero,deepgram,elevenlabs,azure,local-smart-turn]==0.0.108
 pipecat-ai-flows==0.0.24
 
 # PyTorch (large downloads ~900MB total)
@@ -14,7 +14,7 @@ torch==2.8.0
 torchaudio==2.8.0
 
 # AI Service SDKs
-deepgram-sdk==6.0.1
+deepgram-sdk==6.1.1
 openai==1.99.1
 anthropic==0.69.0
 google-genai==1.43.0
