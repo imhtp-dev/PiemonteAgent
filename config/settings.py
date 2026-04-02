@@ -45,33 +45,7 @@ class Settings:
             "numerals": True,
             "endpointing": 300,  # 300ms silence before finalizing (default 10ms too aggressive)
             # Nova-3 keyterm prompting — boosts recognition of Italian medical/booking vocabulary
-            "keyterm": [
-                # Booking actions
-                "procediamo", "confermo", "conferma", "annulla", "annullare",
-                "va bene", "sì", "prenota", "proseguiamo", "cambiare", "modificare",
-                # Gender
-                "maschio", "femmina",
-                # Brand / Locations
-                "Cerba Healthcare", "Leini",
-                # Common medical services
-                "RX", "RX torace", "RX gamba", "RX colonna",
-                "ecografia", "radiografia", "risonanza magnetica", "TAC",
-                "elettrocardiogramma", "ECG", "emocromo", "analisi del sangue",
-                "visita specialistica", "visita cardiologica", "visita ortopedica",
-                "visita dermatologica", "visita ginecologica", "visita oculistica",
-                "visita urologica", "visita neurologica", "visita otorinolaringoiatrica",
-                "fisioterapia", "mammografia", "densitometria ossea", "MOC",
-                "holter", "ecocardiogramma", "spirometria", "colonscopia",
-                "gastroscopia", "ecocolordoppler", "pap test", "tampone",
-                # Body parts
-                "addome", "torace", "ginocchio", "spalla", "caviglia", "anca",
-                "colonna vertebrale", "cervicale", "lombare",
-                # Patient data
-                "codice fiscale", "tessera sanitaria",
-                # Medical terms
-                "prescrizione", "impegnativa", "medicina sportiva",
-                "medicina del lavoro", "laboratorio", "prelievo",
-            ]
+            "keyterm": self._build_deepgram_keyterms()
         }
 
     @property
@@ -89,6 +63,48 @@ class Settings:
             "phrase_list_weight": 2  # Boost recognition confidence for these phrases
         }
     
+    def _build_deepgram_keyterms(self):
+        """Build Deepgram keyterm list: medical vocabulary + doctor full names."""
+        keyterms = [
+            # Booking actions
+            "procediamo", "confermo", "conferma", "annulla", "annullare",
+            "va bene", "sì", "prenota", "proseguiamo", "cambiare", "modificare",
+            # Gender
+            "maschio", "femmina",
+            # Brand / Locations
+            "Cerba Healthcare", "Leini",
+            # Common medical services
+            "RX", "RX torace", "RX gamba", "RX colonna",
+            "ecografia", "radiografia", "risonanza magnetica", "TAC",
+            "elettrocardiogramma", "ECG", "emocromo", "analisi del sangue",
+            "visita specialistica", "visita cardiologica", "visita ortopedica",
+            "visita dermatologica", "visita ginecologica", "visita oculistica",
+            "visita urologica", "visita neurologica", "visita otorinolaringoiatrica",
+            "fisioterapia", "mammografia", "densitometria ossea", "MOC",
+            "holter", "ecocardiogramma", "spirometria", "colonscopia",
+            "gastroscopia", "ecocolordoppler", "pap test", "tampone",
+            # Body parts
+            "addome", "torace", "ginocchio", "spalla", "caviglia", "anca",
+            "colonna vertebrale", "cervicale", "lombare",
+            # Patient data
+            "codice fiscale", "tessera sanitaria",
+            # Medical terms
+            "prescrizione", "impegnativa", "medicina sportiva",
+            "medicina del lavoro", "laboratorio", "prelievo",
+        ]
+        # Add doctor full names from data file
+        try:
+            import json
+            json_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "doctor_names_piemonte.json")
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for doc in data.get("doctors", []):
+                keyterms.append(f"{doc['name']} {doc['surname']}")
+            logger.info(f"🎯 Deepgram keyterms: {len(keyterms)} total ({len(data.get('doctors', []))} doctors)")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not load doctor names for Deepgram keyterms: {e}")
+        return keyterms
+
     def _load_phrase_list(self):
         """Load base phrases + doctor names from data/doctor_names.json"""
         base_phrases = [
@@ -101,7 +117,7 @@ class Settings:
         ]
         try:
             import json
-            json_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "doctor_names.json")
+            json_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "doctor_names_piemonte.json")
             with open(json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             # Add full names (first + surname) for better recognition

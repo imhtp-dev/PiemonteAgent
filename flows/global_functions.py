@@ -13,7 +13,7 @@ from pipecat_flows import FlowsFunctionSchema
 def _load_doctor_surnames() -> str:
     """Load doctor surnames from data/doctor_names.json for LLM spell-check."""
     try:
-        json_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "doctor_names.json")
+        json_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "doctor_names_piemonte.json")
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         surnames = data.get("surnames", [])
