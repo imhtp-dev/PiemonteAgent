@@ -28,6 +28,7 @@ jobs:
             echo "vm_user=azureuser" >> $GITHUB_OUTPUT
             echo "compose_file=docker-compose.staging.yml" >> $GITHUB_OUTPUT
             echo "domain=piemonte-staging.francecentral.cloudapp.azure.com" >> $GITHUB_OUTPUT
+            echo "ssh_key_secret=AZURE_SSH_KEY_STAGING" >> $GITHUB_OUTPUT
           else
             echo "environment=production" >> $GITHUB_OUTPUT
             echo "image_tag=latest" >> $GITHUB_OUTPUT
@@ -35,6 +36,7 @@ jobs:
             echo "vm_user=azureuser" >> $GITHUB_OUTPUT
             echo "compose_file=docker-compose.yml" >> $GITHUB_OUTPUT
             echo "domain=piemonte.francecentral.cloudapp.azure.com" >> $GITHUB_OUTPUT
+            echo "ssh_key_secret=AZURE_SSH_KEY" >> $GITHUB_OUTPUT
           fi
 
       - name: Detect Changes & Generate Version
@@ -78,7 +80,7 @@ jobs:
         with:
           host: ${{ steps.env.outputs.vm_host }}
           username: ${{ steps.env.outputs.vm_user }}
-          key: ${{ secrets.AZURE_SSH_KEY }}
+          key: ${{ github.ref == 'refs/heads/staging' && secrets.AZURE_SSH_KEY_STAGING || secrets.AZURE_SSH_KEY }}
           script: |
             cd /home/azureuser/voilavoiceagent
 
