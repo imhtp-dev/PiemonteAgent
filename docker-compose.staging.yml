@@ -1,0 +1,70 @@
+# Staging environment — single container, lightweight for B2S VM
+services:
+  # Nginx — SSL termination + reverse proxy
+  nginx-lb:
+    image: nginx:alpine
+    container_name: nginx-load-balancer
+    ports:
+      - "443:443"
+      - "8000:8000"
+    volumes:
+      - ./nginx.staging.conf:/etc/nginx/nginx.conf:ro
+      - ./logs/nginx:/var/log/nginx
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - pipecat-agent-1
+    restart: unless-stopped
+    networks:
+      - pipecat-network
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 $$(cat /var/run/nginx.pid 2>/dev/null) 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # Single Pipecat Agent (B2S = 2 vCPU, 4GB RAM)
+  pipecat-agent-1:
+    image: rudyimhtpdev/piemonte_region:staging
+    container_name: pipecat-agent-1
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - INSTANCE_ID=1
+      - ENABLE_TRACING=false
+      - ENVIRONMENT=staging
+      - OTEL_SERVICE_NAME=pipecat-healthcare-staging
+    env_file:
+      - .env
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: '1.5'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - ./logs:/app/logs
+      - ./recordings:/app/recordings
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    networks:
+      - pipecat-network
+
+networks:
+  pipecat-network:
+    driver: bridge
