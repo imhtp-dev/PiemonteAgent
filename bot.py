@@ -1,4 +1,4 @@
-# Piemonte Region Agent — Direct Talkdesk + Bridge support
+# Piemonte Region Agent — Direct Talkdesk support
 import os
 import re
 import json
